@@ -197,7 +197,7 @@ function persist() {
 }
 
 /* ─────────────────── derived indexes (rebuilt on change) ─────────────────── */
-const IDX = { house: {}, plate: {}, money: {}, day: {}, cat: {}, extra: {} };
+const IDX = { house: {}, plate: {}, money: {}, day: {}, cat: {}, extra: {}, extraCharge: {} };
 
 function allServings()      { return S.servings.concat(S.queue.servings); }
 function allContributions() { return S.contributions.concat(S.queue.contributions); }
@@ -223,12 +223,18 @@ function reindex() {
         if (r.house_id != null) d.houses[r.house_id] = (d.houses[r.house_id] || 0) + r.qty;
     });
 
-    // chargeable extra plates per house, across all days
+    // chargeable extra plates per house, and what they are worth at each
+    // day's own price
     IDX.extra = {};
+    IDX.extraCharge = {};
     for (const k in IDX.plate) {
-        const hid = k.split('|')[0];
+        const parts = k.split('|');
+        const hid = parts[0], date = parts[1];
         if (hid === 'g') continue;
-        IDX.extra[hid] = (IDX.extra[hid] || 0) + IDX.plate[k].extra;
+        const n = IDX.plate[k].extra;
+        if (!n) continue;
+        IDX.extra[hid] = (IDX.extra[hid] || 0) + n;
+        IDX.extraCharge[hid] = (IDX.extraCharge[hid] || 0) + n * dayRate(date);
     }
 
     // money per house
@@ -249,15 +255,29 @@ function platesAllDays(houseId) {
     }
     return n;
 }
+// Each event day has its own plate price. An extra Full Dish must never be
+// billed at the price of a Moong Pulao, so every chargeable plate is valued at
+// the price of the day it was actually taken. The event-wide rate is only a
+// fallback for a date that is not a listed event day.
+function dayRate(date) {
+    const d = S.days.filter(x => x.event_date === date)[0];
+    if (d && d.plate_rate != null && d.plate_rate !== '') return num(d.plate_rate);
+    return num(S.settings.extra_plate_rate);
+}
+function dayMenu(date) {
+    const d = S.days.filter(x => x.event_date === date)[0];
+    return d ? (d.menu_label || '') : '';
+}
 const plateTally = (houseId, date) =>
     IDX.plate[(houseId == null ? 'g' : houseId) + '|' + date] || { normal: 0, extra: 0, total: 0 };
 const paidOf = houseId => IDX.money[houseId] || 0;
 const rate   = () => num(S.settings.extra_plate_rate);
 
-// total chargeable extra plates for a house, across all days
-const extraPlatesAllDays = houseId => IDX.extra[houseId] || 0;
+// total chargeable extra plates for a house, and their value, across all days
+const extraPlatesAllDays  = houseId => IDX.extra[houseId] || 0;
+const extraChargeAllDays  = houseId => IDX.extraCharge[houseId] || 0;
 function houseBalance(h) {
-    const extra = extraPlatesAllDays(h.id) * rate();
+    const extra = extraChargeAllDays(h.id);      // valued per-day, not flat
     const paid  = paidOf(h.id);
     const exp   = num(h.contribution_expected);
     return { expected: exp, paid: paid, extra: extra, due: exp + extra - paid };
@@ -619,7 +639,10 @@ function renderTopbar() {
     const d = activeDay();
     $('day-badge').textContent = d ? 'Day ' + d.day_no + ' · ' + d.event_date.slice(8) + '/' +
         d.event_date.slice(5, 7) : (S.activeDate || '—');
-    $('day-menu').textContent = d ? (d.menu_label || 'Event day') : 'No event day set';
+    $('day-menu').textContent = d
+        ? (d.menu_label || 'Event day') +
+          (d.plate_rate != null ? '  ·  ' + money(d.plate_rate) : '')
+        : 'No event day set';
     if (S.tab === 'collect') {
         let tot = 0; allContributions().forEach(r => { tot += num(r.amount); });
         $('topbar-val').textContent = money(tot).replace(CUR, '');
@@ -846,7 +869,9 @@ function renderLive() {
         row.className = 'dayrow' + (day.event_date === S.activeDate ? ' now' : '');
         row.innerHTML = '<div class="dn">' + day.day_no + '</div>' +
             '<div class="dm">' + esc(day.menu_label || 'Day ' + day.day_no) +
-            '<div class="dd">' + esc(day.event_date) + '</div></div>' +
+            '<div class="dd">' + esc(day.event_date) +
+            (day.plate_rate != null ? ' · ' + money(day.plate_rate) + '/plate' : '') +
+            '</div></div>' +
             '<div class="dp">' + t.total + '</div>';
         row.onclick = () => { S.activeDate = day.event_date; persist(); renderAll(); };
         dl.appendChild(row);
@@ -1024,6 +1049,8 @@ function openServeSheet(h) {
     $('sh-today').textContent = t.total;
     $('sh-left').textContent = free;
     $('sh-extra').textContent = t.extra;
+    const r = dayRate(S.activeDate);
+    $('sh-rate').textContent = r > 0 ? money(r) : '—';
 
     const g = $('qty-grid');
     g.innerHTML = '';
@@ -1043,14 +1070,17 @@ function openServeSheet(h) {
 
 function askExtra(h, n, p) {
     S.pendingServe = { house: h, plan: p };
-    const r = rate();
+    const r = dayRate(S.activeDate);
+    const menu = dayMenu(S.activeDate);
     $('xm-title').textContent = h.house_code + ' has already taken its registered plates';
     $('xm-body').innerHTML = esc(h.house_code) +
         (h.family_name ? ' (' + esc(h.family_name) + ')' : '') +
         ' is registered for <b>' + h.member_count + ' plates</b> a day and has taken <b>' +
         p.tally.normal + '</b> today. Allowing this adds <b>' + p.extra +
         ' extra plate' + (p.extra > 1 ? 's' : '') + '</b>' +
-        (r > 0 ? ', chargeable at ' + money(r) + ' each and recovered later.' : '.');
+        (r > 0 ? ', chargeable at <b>' + money(r) + '</b> each' +
+                 (menu ? ' (today is ' + esc(menu) + ')' : '') +
+                 ' and recovered later.' : '.');
     $('xm-split').innerHTML =
         'Covered by contribution <b>' + p.normal + '</b>' +
         '<br>Extra (chargeable) <b>' + p.extra + '</b>' +

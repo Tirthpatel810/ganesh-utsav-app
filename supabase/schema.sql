@@ -79,11 +79,18 @@ create table if not exists event_days (
     event_date   date    not null unique,
     day_no       integer not null,
     menu_label   text    not null default '',
+    plate_rate   numeric(12,2),          -- price of ONE plate on this day
     window_start time,
     window_end   time,
     is_open      boolean not null default true,
     updated_at   timestamptz not null default now()
 );
+
+-- Migration for projects created before plate_rate existed. Each day has its
+-- own price (a Full Dish is worth three Moong Pulaos), so a single flat extra
+-- rate would mis-bill every chargeable plate. app_settings.extra_plate_rate
+-- stays only as the fallback for a date that is not a listed event day.
+alter table event_days add column if not exists plate_rate numeric(12,2);
 
 -- =====================================================================
 -- 4. PROFILES -- auth user -> role, name, and RECEIPT SERIES
@@ -253,7 +260,15 @@ end $$;
 
 -- =====================================================================
 -- 9. REPORTING VIEWS (dashboard + Odoo reports read these)
+--
+-- Dropped before being recreated: "create or replace view" refuses any change
+-- to the column list, so re-running this file after a shape change would fail
+-- on an existing project.
 -- =====================================================================
+drop view if exists v_day_totals        cascade;
+drop view if exists v_house_statement   cascade;
+drop view if exists v_money_summary     cascade;
+drop view if exists v_expense_by_category cascade;
 
 -- plates per day.  houses_served counts only houses with a POSITIVE net for
 -- that day, so a mis-entry that was undone does not leave a phantom visit.
@@ -270,24 +285,34 @@ agg as (
            sum(qty) filter (where is_guest)       as plates_guest
     from servings group by event_date)
 select d.event_date, d.day_no, d.menu_label,
+       d.plate_rate,
        coalesce(a.plates_total,  0) as plates_total,
        coalesce(a.plates_normal, 0) as plates_normal,
        coalesce(a.plates_extra,  0) as plates_extra,
        coalesce(a.plates_guest,  0) as plates_guest,
        coalesce((select count(*) from per_house p
-                  where p.event_date = d.event_date and p.net > 0), 0) as houses_served
+                  where p.event_date = d.event_date and p.net > 0), 0) as houses_served,
+       coalesce(a.plates_total, 0) * coalesce(d.plate_rate, 0) as plate_value
 from event_days d
 left join agg a on a.event_date = d.event_date;
 
 -- THE key report: one line per house -- money owed, money paid, plates taken,
--- chargeable extras, and the net balance still due.
+-- chargeable extras valued at each day's own price, and the balance still due.
 create or replace view v_house_statement as
 with cfg as (select extra_plate_rate from app_settings where id = 1),
 plates as (
-    select house_id,
-           sum(qty)                         as plates_total,
-           sum(qty) filter (where is_extra) as plates_extra
-    from servings where house_id is not null group by house_id),
+    select s.house_id,
+           sum(s.qty)                                    as plates_total,
+           sum(s.qty) filter (where s.is_extra)           as plates_extra,
+           -- value every extra plate at the price of the day it was taken
+           sum(case when s.is_extra
+                    then s.qty * coalesce(d.plate_rate, c.extra_plate_rate, 0)
+                    else 0 end)                           as extra_charge
+    from servings s
+    cross join cfg c
+    left join event_days d on d.event_date = s.event_date
+    where s.house_id is not null
+    group by s.house_id),
 attended as (
     -- only days with a positive net count as attended
     select house_id, count(*) as days_attended
@@ -307,13 +332,12 @@ select h.id                                        as house_id,
        coalesce(p.plates_total,  0)                as plates_total,
        coalesce(p.plates_extra,  0)                as plates_extra,
        coalesce(a.days_attended, 0)                as days_attended,
-       coalesce(p.plates_extra,  0) * c.extra_plate_rate as extra_charge,
+       coalesce(p.extra_charge,  0)                as extra_charge,
        h.contribution_expected
-         + coalesce(p.plates_extra, 0) * c.extra_plate_rate
+         + coalesce(p.extra_charge, 0)
          - coalesce(m.contributed, 0)              as balance_due,
        m.last_paid
 from houses h
-cross join cfg c
 left join plates   p on p.house_id = h.id
 left join attended a on a.house_id = h.id
 left join money    m on m.house_id = h.id;

@@ -14,8 +14,8 @@
    belongs only in Odoo's server-side settings.
    ===================================================================== */
 window.GANESH_CONFIG = {
-  SUPABASE_URL : "https://PASTE-YOUR-PROJECT-REF.supabase.co",
-  SUPABASE_ANON: "PASTE-YOUR-ANON-PUBLIC-KEY",
+  SUPABASE_URL : "https://jfedobsozembqfhjmubj.supabase.co",
+  SUPABASE_ANON: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpmZWRvYnNvemVtYnFmaGptdWJqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODg0OTc5OTgsImV4cCI6MjEwNDA3Mzk5OH0.zCdspURzYhCLmVxMStyv5uKhNBoB6n9Vn_MKmZ2kTKs",
 
   // How often the app asks the server for new rows, in seconds.
   // 4s feels live. Raise to 10 on a very bad network to save battery.
