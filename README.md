@@ -1,19 +1,43 @@
-# Ganesh Utsav — Society Event Management
+# Ganesh Utsav 2026 — Shashwat Society
 
-A ₹0 system for a residential society's Ganesh Mahotsav: food plate counter,
-contribution collection, expense tracking, and full accounting.
+**App:** https://tirthpatel810.github.io/ganesh-utsav-app/
+**Logins:** `~/ganesh-credentials.txt` on the Odoo machine (chmod 600)
+**Cloud:** Supabase project `jfedobsozembqfhjmubj` (Mumbai) · [dashboard](https://supabase.com/dashboard/project/jfedobsozembqfhjmubj)
+**Odoo:** `db_ganesh_shashwat` (live) and `db_ganesh_shashwat_test` (practice)
 
-Two halves:
+Everything below is **already set up and working**. This is reference, not a to-do list.
+
+## The menu
+
+| Day | Date | Menu | Plate price |
+|---|---|---|---|
+| 1 | Mon 14/09 | Live Dhokla with Chutney | ₹60 |
+| 2 | Tue 15/09 | Idli Sambar with Chutney | ₹70 |
+| 3 | Wed 16/09 | Moong Pulao | ₹50 |
+| 4 | Thu 17/09 | Sev Usal with Pav | ₹80 |
+| 5 | Fri 18/09 | Chhole Bhature with Chaas | ₹90 |
+| 6 | Sat 19/09 | Pav Bhaji with Pulav | ₹100 |
+| 7 | Sun 20/09 | Full Dish | ₹150 |
+| | | **Menu value per person** | **₹600** |
+| | | Standard contribution | ₹500 |
+| | | **Subsidy carried per person** | **₹100** |
+
+Each day is priced separately, and that matters: an extra plate is charged at
+**the price of the day it was taken**. Two extra Full Dishes cost ₹300, two
+extra Moong Pulaos cost ₹100. A single flat rate would have mis-billed every
+chargeable plate.
+
+## Two halves
 
 | | Runs | Owns |
 |---|---|---|
-| **This app** (PWA) | 24/7 in the cloud, free | The three ledgers during the event |
-| **Odoo module** `ganesh_utsav` | Your laptop, whenever you want | Roster, money rules, accounting, reports |
+| **The app** (PWA) | 24/7 on GitHub Pages, free | The three ledgers during the event |
+| **Odoo** `ganesh_utsav` | Your laptop, whenever | Roster, money rules, accounting, reports |
 
-Odoo **pushes** the roster, days and money rules to the app. It **pulls** plates,
-contributions and expenses back. One direction per table, so there is nothing to
-merge and nothing to lose. **While Odoo is switched off the volunteers keep
-working** — everything catches up automatically the next time it starts.
+Odoo **pushes** the roster, days and prices to the app. It **pulls** plates,
+contributions and expenses back. One direction per table, so there is nothing
+to merge and nothing to lose. **While Odoo is off the volunteers keep working** —
+it all catches up the next time Odoo starts.
 
 ---
 
@@ -35,139 +59,64 @@ If you change one thing in this system, don't change that.
 
 ---
 
-# Setup — what only you can do
+# What is already done
 
-Roughly 40 minutes end to end. Do the parts in order.
+| | Status |
+|---|---|
+| Supabase project, schema, views, RLS | ✅ live in Mumbai |
+| 7 event days with menus and plate prices | ✅ loaded |
+| Roster | ⚠️ **117 placeholder houses — see below** |
+| 6 volunteer logins with unique receipt series | ✅ created |
+| Public signup | ✅ **disabled** — only these 6 accounts can ever sign in |
+| App deployed and reachable | ✅ https://tirthpatel810.github.io/ganesh-utsav-app/ |
+| Auto-deploy on push | ✅ GitHub Actions |
+| Odoo DBs (live + test), India/INR, Indian CoA | ✅ built |
+| Enterprise accounting (`account_accountant`) | ✅ installed |
+| Event, journal, analytic account, ledger accounts | ✅ configured |
+| Odoo ↔ cloud sync | ✅ tested end to end, 30/30 checks |
+| Test data | ✅ cleared — you start from zero |
 
-## Part A — Supabase (the 24/7 cloud). Free, no card.
+## The logins
 
-1. **Create the project.** Go to [supabase.com](https://supabase.com) → sign up →
-   **New project**.
-   - Name: `ganesh-utsav`
-   - Database password: pick one and save it somewhere
-   - Region: **Mumbai** or **Singapore** (closest to India = fastest for the phones)
-   - Plan: **Free**
+Passwords are in **`~/ganesh-credentials.txt`** on the Odoo machine. Each is
+typed **once per phone**; the app then stays signed in.
 
-2. **Create the tables.** Left sidebar → **SQL Editor** → **New query**.
-   Paste the whole of [`supabase/schema.sql`](supabase/schema.sql) → **Run**.
-   You should see `Success. No rows returned`. It is safe to re-run at any time.
+| Login | Role | Receipt series | For |
+|---|---|---|---|
+| `admin@ganesh.local` | admin | Z | Odoo sync, roster edits, approvals |
+| `counter1@ganesh.local` | volunteer | A | Food counter |
+| `counter2@ganesh.local` | volunteer | B | Food counter, 2nd gate |
+| `collect1@ganesh.local` | volunteer | C | Door-to-door collection |
+| `collect2@ganesh.local` | volunteer | D | Door-to-door collection |
+| `kitchen@ganesh.local` | volunteer | E | Live dashboard |
 
-3. **Load your roster and the 7 days.**
-   **Open [`supabase/seed.sql`](supabase/seed.sql) and edit the roster section first** —
-   it ships with wing A 1–10, wing B 11–60, wing C 1–57 as a starting point.
-   Then paste it into a new SQL Editor query → **Run**.
+**Never give two people the same receipt series.** Each letter is a separate
+receipt book; that is what lets a volunteer issue `GU26/C/0042` at someone's
+door with no signal and never clash with another collector.
 
-   You can also skip this and enter the roster in Odoo instead, then press
-   **Push Full Roster** there. Do one or the other, not both.
+## The one thing still outstanding: your real roster
 
-4. **Get your keys.** Settings (gear) → **API**. You need three values:
+The roster is currently **117 placeholder houses** (A 1–10, B 11–60, C 1–57).
+Your `A65-66` example does not fit "A is 1 to 10", so I could not guess the
+real numbering. Fix it whichever way suits:
 
-   | Value | Goes into | Safe to make public? |
-   |---|---|---|
-   | Project URL | `config.js` **and** Odoo | yes |
-   | `anon` / `public` key | `config.js` | **yes** — Row Level Security requires a login for every read |
-   | `service_role` key | **Odoo only** | **NO. NEVER commit this.** It bypasses all security. |
+- **In the app** — sign in as `admin@ganesh.local` → More → Roster → edit or add
+- **In Odoo** — Ganesh Utsav → Houses → edit, then **Sync Now** on the event
+- **Send me the list** and I will load it in one go
 
-5. **Turn off email confirmation** (otherwise you cannot create volunteer logins
-   without real mailboxes). Authentication → **Sign In / Providers** → Email →
-   switch **Confirm email** OFF → Save.
+Per house you need: house code (permanent, e.g. `B-56`), grid group (`AB` or `C`),
+button label (`56`, `65-66`), plates/day, and expected contribution (₹500 default).
+Merged flats are **one row, one button**.
 
-6. **Create one login per volunteer.** Authentication → **Users** → **Add user** →
-   *Create new user*. Use fake-but-consistent emails; nobody has to receive mail.
+## Adding a volunteer later
 
-   | Email | Password | User Metadata (paste as JSON) |
-   |---|---|---|
-   | `admin@ganesh.local` | *yours* | `{"display_name":"Committee","role":"admin","receipt_series":"Z"}` |
-   | `counter1@ganesh.local` | *simple* | `{"display_name":"Rohan","role":"volunteer","receipt_series":"A"}` |
-   | `counter2@ganesh.local` | *simple* | `{"display_name":"Priya","role":"volunteer","receipt_series":"B"}` |
+Supabase dashboard → Authentication → Users → **Add user**, with User Metadata:
 
-   **`receipt_series` matters.** Each collector gets their own letter, exactly like
-   a physical receipt book. Receipt numbers are issued *on the phone* as
-   `GU26/A/0001`, `GU26/A/0002`, … which is what lets a volunteer collect
-   door-to-door with **no signal at all** and still never clash with another
-   volunteer's numbering. **Never give two people the same letter.**
+```json
+{"display_name":"Ravi","role":"volunteer","receipt_series":"F"}
+```
 
-   Tick `can_expense` for whoever records spends — set it in the SQL Editor:
-   ```sql
-   update profiles set can_expense = true where display_name = 'Priya';
-   ```
-
-## Part B — GitHub Pages (hosting the app). Free.
-
-1. **Fill in `config.js`** with the Project URL and the `anon` key from A4.
-   The deploy refuses to run while the placeholders are still there.
-
-2. **Create the repo.** On GitHub (account `TirthPatel810`) → **New repository** →
-   name `ganesh-utsav-app` → **Public** → *do not* add a README → Create.
-
-   Public is required for free GitHub Pages. That is fine: the repo contains no
-   secrets. The `anon` key in `config.js` grants nothing without a login.
-
-3. **Push.** The folder is already a git repo with a commit ready:
-   ```bash
-   cd /home/tirth/workspace/ganesh-utsav-app
-   git remote add origin https://github.com/TirthPatel810/ganesh-utsav-app.git
-   git push -u origin main
-   ```
-
-4. **Turn on Pages.** Repo → Settings → **Pages** → Source: **GitHub Actions**.
-
-5. Watch the **Actions** tab. When it goes green your URL is:
-   `https://tirthpatel810.github.io/ganesh-utsav-app/`
-
-6. **Give the volunteers the link.** On each phone: open it in Chrome →
-   menu → **Add to Home screen**. It then opens full-screen like an app and
-   works offline.
-
-Every later `git push` redeploys automatically, and the workflow bumps the
-service-worker cache so phones pick up the new version on next open.
-
-## Part C — Odoo (the back office)
-
-1. The module is already at
-   `/home/tirth/workspace/19_ent/custom_addons/ganesh_utsav`.
-   Make sure that folder is on your `addons_path`, then restart Odoo.
-
-2. Apps → **Update Apps List** → search **Ganesh** → **Activate**.
-
-3. Settings → Users → your user → set **Ganesh Utsav = Committee / Manager**.
-   Log out and back in.
-
-4. **Ganesh Utsav → Events → New**
-   - Name, year, start `2026-09-14`, end `2026-09-20`
-   - Standard Contribution `500`, Extra Plate Rate `30`, Receipt Prefix `GU26`
-   - **Generate Days** → fills in the 7 days → type the menu into each
-
-5. **Roster.** Either the Houses tab on the event, or Ganesh Utsav → Houses.
-   For each house:
-
-   | Field | Meaning |
-   |---|---|
-   | House code | Permanent id, e.g. `B-56`. **Never renumber or reuse it.** |
-   | Grid Group | Which tab in the app: `AB`, `C` |
-   | Button Label | What is printed on the button. Short: `56`, `65-66` |
-   | Sort order | Button order inside the tab |
-   | Plates / Day | Registered plates. Beyond this becomes a chargeable extra. |
-   | Expected Contribution | ₹500 default; override for the exceptions |
-
-   Merged flats are **one row, one button**: code `A-65-66`, label `65-66`.
-   Irregular numbering needs no code changes — it is all just data.
-
-6. **Sync tab** → paste the Project URL and the **`service_role`** key →
-   Save → **Push Full Roster**. Within seconds every phone has it.
-
-7. **Accounting tab** (needed only before you post to the books):
-   - Journal: make a Miscellaneous journal called *Ganesh Utsav*
-   - Analytic Account: create one for the event — this is what gives you a
-     true event P&L in Odoo's standard reports
-   - Contribution Income / Cash / Bank / Default Expense accounts
-
-8. **Optional: automatic sync.** Settings → Technical → Scheduled Actions →
-   *Ganesh Utsav: sync with cloud app* → set **Active**. It then syncs every
-   2 minutes **while Odoo is running**, and catches up on its own after downtime.
-   The **Sync Now** button always works regardless.
-
----
+Use an **unused** series letter. Signup is disabled, so this is the only way in.
 
 # Using it
 
@@ -232,11 +181,13 @@ row rather than deleting anything, so the audit trail stays intact.
    contributions, turn it back on, watch the queue drain. Then confirm in Odoo
    that the totals match.
 3. **Check every volunteer has a different `receipt_series`.**
-4. **Delete the test data before day 1:**
+4. **Test data is already cleared.** If you generate more while practising,
+   clear it again from the Supabase SQL Editor:
    ```sql
    truncate servings, contributions, expenses restart identity cascade;
    ```
-   In Odoo, delete the test event (the ledgers cascade with it).
+   then in Odoo set the event's three sync cursors back to 0 and delete the
+   pulled rows. Or just practise in `db_ganesh_shashwat_test` instead.
 
 ---
 
