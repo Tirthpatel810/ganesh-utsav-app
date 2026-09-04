@@ -1,0 +1,331 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,maximum-scale=1,user-scalable=no">
+<meta name="theme-color" content="#7c2d12">
+<title>Ganesh Utsav</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+
+<!-- ══════════════════ LOGIN ══════════════════ -->
+<section id="screen-login" class="screen active">
+  <div class="login-wrap"><div class="login-card">
+    <div class="brand">
+      <div class="brand-mark">🪔</div>
+      <h1 id="login-title">Ganesh Utsav</h1>
+      <p class="brand-sub">Society Event Management</p>
+    </div>
+    <form id="login-form">
+      <label for="login-email">Volunteer ID</label>
+      <input id="login-email" type="email" inputmode="email" autocapitalize="none"
+             autocorrect="off" spellcheck="false" required placeholder="counter1@ganesh.local">
+      <label for="login-pass">Password</label>
+      <input id="login-pass" type="password" required placeholder="••••••••">
+      <button type="submit" class="btn-primary btn-lg" id="login-btn">Sign In</button>
+      <p id="login-error" class="err" hidden></p>
+    </form>
+    <p class="login-foot" id="login-config-warn" hidden>
+      ⚠ Not configured. Edit <code>config.js</code> with your Supabase URL and anon key.
+    </p>
+  </div></div>
+</section>
+
+<!-- ══════════════════ APP ══════════════════ -->
+<section id="screen-app" class="screen">
+
+  <header class="topbar">
+    <div class="topbar-main">
+      <div class="day-badge" id="day-badge">Day —</div>
+      <div class="day-menu" id="day-menu">No event day</div>
+    </div>
+    <div class="topbar-right">
+      <div class="plate-total" id="topbar-val">0</div>
+      <div class="plate-label" id="topbar-key">plates</div>
+    </div>
+  </header>
+  <div class="netbar" id="netbar" data-state="ok">
+    <span id="netbar-text">Online · synced</span>
+    <span id="netbar-queue" class="queue-pill" hidden>0 queued</span>
+  </div>
+
+  <!-- ─────────── TAB: SERVE (food counter) ─────────── -->
+  <main id="tab-serve" class="tab active">
+    <div class="recent-strip" id="recent-strip" hidden>
+      <span class="recent-label">Recent</span><div class="recent-items" id="recent-items"></div>
+    </div>
+    <div class="search-row">
+      <input id="search" type="search" inputmode="search" autocapitalize="none"
+             autocorrect="off" spellcheck="false" placeholder="Type number or family name…">
+    </div>
+    <nav class="group-tabs" id="group-tabs"></nav>
+    <div class="legend">
+      <span><i class="sw sw-none"></i>Not come</span><span><i class="sw sw-part"></i>Partial</span>
+      <span><i class="sw sw-full"></i>Full</span><span><i class="sw sw-extra"></i>Extra</span>
+    </div>
+    <div class="grid" id="house-grid"></div>
+    <p class="empty-note" id="grid-empty" hidden>No houses match.</p>
+    <button class="guest-fab" id="guest-btn">+ Guest</button>
+  </main>
+
+  <!-- ─────────── TAB: COLLECT (contributions) ─────────── -->
+  <main id="tab-collect" class="tab">
+    <div class="money-strip">
+      <div><b id="c-collected">₹0</b><span>collected</span></div>
+      <div><b id="c-expected">₹0</b><span>expected</span></div>
+      <div><b id="c-pct">0%</b><span>done</span></div>
+    </div>
+    <div class="progress"><i id="c-bar" style="width:0%"></i></div>
+    <div class="search-row">
+      <input id="c-search" type="search" inputmode="search" autocapitalize="none"
+             autocorrect="off" spellcheck="false" placeholder="Type number or family name…">
+    </div>
+    <nav class="group-tabs" id="c-group-tabs"></nav>
+    <div class="legend">
+      <span><i class="sw sw-none"></i>Unpaid</span><span><i class="sw sw-part"></i>Partial</span>
+      <span><i class="sw sw-full"></i>Settled</span><span><i class="sw sw-over"></i>Advance</span>
+    </div>
+    <div class="grid" id="collect-grid"></div>
+    <p class="empty-note" id="c-grid-empty" hidden>No houses match.</p>
+    <button class="guest-fab blue" id="donor-btn">+ Outside donor</button>
+  </main>
+
+  <!-- ─────────── TAB: EXPENSE ─────────── -->
+  <main id="tab-expense" class="tab">
+    <div class="money-strip">
+      <div><b id="e-spent">₹0</b><span>spent</span></div>
+      <div><b id="e-hand">₹0</b><span>in hand</span></div>
+      <div><b id="e-draft">0</b><span>unapproved</span></div>
+    </div>
+    <div class="card">
+      <h3>Record a spend</h3>
+      <label>Category</label>
+      <select id="e-cat"></select>
+      <div class="two-col">
+        <div><label>Amount ₹</label>
+          <input id="e-amt" type="number" inputmode="decimal" min="0" step="1" placeholder="0"></div>
+        <div><label>Date</label><input id="e-date" type="date"></div>
+      </div>
+      <label>What was it for</label>
+      <input id="e-desc" placeholder="e.g. Day 1 samosa raw material">
+      <div class="two-col">
+        <div><label>Paid to (vendor)</label><input id="e-vendor" placeholder="optional"></div>
+        <div><label>Paid by</label><input id="e-paidby" placeholder="volunteer name"></div>
+      </div>
+      <label>Mode</label>
+      <div class="mode-row" id="e-mode"></div>
+      <label>Bill photo <span class="opt">optional</span></label>
+      <div class="photo-row">
+        <input id="e-photo" type="file" accept="image/*" capture="environment" hidden>
+        <button class="btn-ghost" id="e-photo-btn">📷 Attach bill</button>
+        <img id="e-photo-prev" hidden alt="bill preview">
+        <button class="icon-btn" id="e-photo-clear" hidden aria-label="Remove photo">✕</button>
+      </div>
+      <button class="btn-primary btn-lg full" id="e-save">Save expense</button>
+      <p id="e-error" class="err" hidden></p>
+    </div>
+    <h3 class="sec-title">By category</h3>
+    <div class="daylist" id="e-bycat"></div>
+    <h3 class="sec-title">All expenses</h3>
+    <div class="log-list boxed" id="e-list"></div>
+  </main>
+
+  <!-- ─────────── TAB: LIVE ─────────── -->
+  <main id="tab-live" class="tab">
+    <h3 class="sec-title">Food — today</h3>
+    <div class="stat-grid">
+      <div class="stat big"><div class="stat-val" id="s-total">0</div><div class="stat-key">Plates today</div></div>
+      <div class="stat"><div class="stat-val" id="s-rate">0</div>
+        <div class="stat-key">Last 15 min <span id="s-trend" class="trend"></span></div></div>
+      <div class="stat"><div class="stat-val" id="s-houses">0</div><div class="stat-key">Houses served</div></div>
+      <div class="stat"><div class="stat-val" id="s-pending">0</div><div class="stat-key">Not yet come</div></div>
+      <div class="stat"><div class="stat-val" id="s-extra">0</div><div class="stat-key">Extra plates</div></div>
+      <div class="stat"><div class="stat-val" id="s-guest">0</div><div class="stat-key">Guest plates</div></div>
+    </div>
+    <h3 class="sec-title">Arrival — last 2 hours</h3>
+    <div class="spark" id="spark"></div>
+
+    <h3 class="sec-title">Money — event to date</h3>
+    <div class="stat-grid">
+      <div class="stat"><div class="stat-val money in" id="m-in">₹0</div><div class="stat-key">Collected</div></div>
+      <div class="stat"><div class="stat-val money out" id="m-out">₹0</div><div class="stat-key">Spent</div></div>
+      <div class="stat big"><div class="stat-val money" id="m-bal">₹0</div><div class="stat-key">Balance in hand</div></div>
+      <div class="stat"><div class="stat-val" id="m-paid">0</div><div class="stat-key">Houses paid</div></div>
+      <div class="stat"><div class="stat-val" id="m-unpaid">0</div><div class="stat-key">Houses pending</div></div>
+      <div class="stat"><div class="stat-val money" id="m-extra">₹0</div><div class="stat-key">Extra-plate dues</div></div>
+      <div class="stat"><div class="stat-val money" id="m-donor">₹0</div><div class="stat-key">Outside donors</div></div>
+    </div>
+
+    <h3 class="sec-title">All days</h3>
+    <div class="daylist" id="daylist"></div>
+    <h3 class="sec-title">Not yet come today</h3>
+    <div class="pending-list" id="pending-list"></div>
+    <h3 class="sec-title">Collection pending</h3>
+    <div class="pending-list" id="unpaid-list"></div>
+  </main>
+
+  <!-- ─────────── TAB: MORE ─────────── -->
+  <main id="tab-more" class="tab">
+    <div class="card">
+      <h3>This device</h3>
+      <label for="device-label">Counter name (appears in reports)</label>
+      <input id="device-label" placeholder="e.g. Counter 1">
+      <p class="hint">Signed in as <b id="who-name">—</b> <span class="role-pill" id="who-role"></span><br>
+        Receipt book series <b id="who-series">—</b></p>
+    </div>
+    <div class="card">
+      <h3>Serving day</h3>
+      <select id="day-select"></select>
+      <p class="hint">Defaults to today. Change only to correct a past day — everything
+        you serve is recorded against the day shown here.</p>
+    </div>
+    <div class="card">
+      <h3>Roster</h3>
+      <div class="roster-head">
+        <input id="roster-search" type="search" placeholder="Search roster…"
+               autocapitalize="none" autocorrect="off" spellcheck="false">
+        <button class="btn-primary" id="roster-add">+ Add</button>
+      </div>
+      <p class="hint" id="roster-hint"></p>
+      <div class="roster-list" id="roster-list"></div>
+    </div>
+    <div class="card">
+      <h3>Data</h3>
+      <div class="row-btns">
+        <button class="btn-ghost" id="btn-refresh">Full refresh</button>
+        <button class="btn-ghost" id="btn-export">Export CSV</button>
+      </div>
+      <p class="hint" id="sync-detail"></p>
+    </div>
+    <div class="card">
+      <h3>Today's activity</h3>
+      <div class="log-list" id="log-list"></div>
+    </div>
+    <button class="btn-danger" id="btn-signout">Sign out</button>
+    <p class="version">v<span id="app-version">1</span></p>
+  </main>
+
+  <nav class="bottom-nav">
+    <button data-tab="serve" class="active"><span>🍽</span>Serve</button>
+    <button data-tab="collect"><span>💰</span>Collect</button>
+    <button data-tab="expense"><span>🧾</span>Spend</button>
+    <button data-tab="live"><span>📊</span>Live</button>
+    <button data-tab="more"><span>⚙</span>More</button>
+  </nav>
+</section>
+
+<!-- ══════════════════ SERVE SHEET ══════════════════ -->
+<div class="sheet-back" id="sheet-back" hidden></div>
+<div class="sheet" id="serve-sheet" hidden>
+  <div class="sheet-grip"></div>
+  <div class="sheet-head">
+    <div><div class="sh-code" id="sh-code">—</div><div class="sh-name" id="sh-name">—</div></div>
+    <button class="icon-btn lg" id="sheet-close" aria-label="Close">✕</button>
+  </div>
+  <div class="sh-meta">
+    <div><b id="sh-members">0</b><span>registered</span></div>
+    <div><b id="sh-today">0</b><span>taken today</span></div>
+    <div><b id="sh-left">0</b><span>free left</span></div>
+    <div><b id="sh-extra">0</b><span>extra today</span></div>
+  </div>
+  <div class="qty-grid" id="qty-grid"></div>
+  <div class="qty-custom">
+    <button class="icon-btn lg" id="q-minus">−</button>
+    <input id="q-input" type="number" inputmode="numeric" min="1" max="99" value="1">
+    <button class="icon-btn lg" id="q-plus">+</button>
+    <button class="btn-primary btn-lg" id="q-serve">Serve</button>
+  </div>
+  <div class="sh-log" id="sh-log"></div>
+</div>
+
+<!-- ══════════════════ COLLECT SHEET ══════════════════ -->
+<div class="sheet" id="collect-sheet" hidden>
+  <div class="sheet-grip"></div>
+  <div class="sheet-head">
+    <div><div class="sh-code" id="cs-code">—</div><div class="sh-name" id="cs-name">—</div></div>
+    <button class="icon-btn lg" id="cs-close" aria-label="Close">✕</button>
+  </div>
+  <div class="sh-meta">
+    <div><b id="cs-exp">₹0</b><span>expected</span></div>
+    <div><b id="cs-paid">₹0</b><span>paid</span></div>
+    <div><b id="cs-extra">₹0</b><span>extra plates</span></div>
+    <div><b id="cs-bal">₹0</b><span>balance</span></div>
+  </div>
+  <label class="fl">Amount received ₹</label>
+  <div class="amt-row">
+    <input id="cs-amt" type="number" inputmode="decimal" min="0" step="1">
+    <div class="chip-row" id="cs-chips"></div>
+  </div>
+  <label class="fl">Mode</label>
+  <div class="mode-row" id="cs-mode"></div>
+  <label class="fl">Note <span class="opt">optional</span></label>
+  <input id="cs-note" placeholder="e.g. paid to Rohan">
+  <p class="receipt-line">Receipt <b id="cs-receipt">—</b></p>
+  <button class="btn-primary btn-lg full" id="cs-save">Collect &amp; issue receipt</button>
+  <p id="cs-error" class="err" hidden></p>
+  <div class="sh-log" id="cs-log"></div>
+</div>
+
+<!-- ══════════════════ MODALS ══════════════════ -->
+<div class="modal-back" id="modal-back" hidden></div>
+
+<div class="modal" id="extra-modal" hidden>
+  <div class="modal-icon">⚠️</div>
+  <h3 id="xm-title">Registered plates already taken</h3>
+  <p id="xm-body"></p>
+  <div class="xm-split" id="xm-split"></div>
+  <div class="modal-btns">
+    <button class="btn-ghost" id="xm-cancel">Cancel</button>
+    <button class="btn-warn" id="xm-ok">Allow as Extra</button>
+  </div>
+</div>
+
+<div class="modal" id="donor-modal" hidden>
+  <h3>Outside donation</h3>
+  <div class="form-grid">
+    <label class="wide">Donor name<input id="dm-name" placeholder="e.g. Shah Traders"></label>
+    <label>Amount ₹<input id="dm-amt" type="number" inputmode="decimal" min="0"></label>
+    <label>Mode<select id="dm-mode"></select></label>
+    <label class="wide">Note<input id="dm-note"></label>
+  </div>
+  <p class="receipt-line">Receipt <b id="dm-receipt">—</b></p>
+  <p id="dm-error" class="err" hidden></p>
+  <div class="modal-btns">
+    <button class="btn-ghost" id="dm-cancel">Cancel</button>
+    <button class="btn-primary" id="dm-save">Save</button>
+  </div>
+</div>
+
+<div class="modal" id="house-modal" hidden>
+  <h3 id="hm-title">Edit house</h3>
+  <div class="form-grid">
+    <label>House code<input id="hm-code" placeholder="B-56"></label>
+    <label>Group<input id="hm-group" placeholder="AB"></label>
+    <label>Button label<input id="hm-label" placeholder="56"></label>
+    <label>Sort order<input id="hm-sort" type="number"></label>
+    <label class="wide">Family name<input id="hm-family" placeholder="Sharma"></label>
+    <label>Plates/day<input id="hm-members" type="number" min="0" value="4"></label>
+    <label>Expected ₹<input id="hm-exp" type="number" min="0" value="500"></label>
+    <label class="wide">Phone<input id="hm-phone" inputmode="tel"></label>
+    <label class="wide">Notes<input id="hm-notes"></label>
+    <label class="wide chk"><input id="hm-active" type="checkbox" checked> Active</label>
+  </div>
+  <p id="hm-error" class="err" hidden></p>
+  <div class="modal-btns">
+    <button class="btn-ghost" id="hm-cancel">Cancel</button>
+    <button class="btn-primary" id="hm-save">Save</button>
+  </div>
+</div>
+
+<div id="toast-host"></div>
+<script src="config.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

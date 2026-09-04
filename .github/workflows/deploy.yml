@@ -1,0 +1,56 @@
+# Publishes the app to GitHub Pages on every push to main.
+# Nothing to build -- it is plain HTML/CSS/JS, so we upload the folder as is.
+name: Deploy app to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fail early if config.js was never filled in
+        run: |
+          if grep -q "PASTE-YOUR" config.js; then
+            echo "::error::config.js still has placeholder values."
+            echo "Edit config.js with your Supabase URL and anon key, then push again."
+            exit 1
+          fi
+          echo "config.js looks configured."
+
+      - name: Check the app parses
+        run: |
+          node --check app.js
+          node --check sw.js
+          node -e "JSON.parse(require('fs').readFileSync('manifest.webmanifest','utf8'))"
+          echo "app.js, sw.js and manifest are all valid."
+
+      - name: Stamp the build into the cache name
+        run: |
+          # Bumping the service-worker cache name forces every phone to pick
+          # up this deploy instead of serving the previously cached shell.
+          sed -i "s/ganesh-utsav-v1/ganesh-utsav-${GITHUB_SHA::8}/" sw.js
+          echo "service worker cache: ganesh-utsav-${GITHUB_SHA::8}"
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: .
+      - id: deploy
+        uses: actions/deploy-pages@v4
