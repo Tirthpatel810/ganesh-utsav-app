@@ -34,8 +34,8 @@ where id = 1;
 -- ---------------------------------------------------------------------
 insert into event_days (event_date, day_no, menu_label, plate_rate,
                         window_start, window_end, is_open) values
-    ('2026-09-14', 1, 'Live Dhokla with Chutney',      60.00, '19:00', '22:30', true),
-    ('2026-09-15', 2, 'Idli Sambar with Chutney',      70.00, '19:00', '22:30', true),
+    ('2026-09-14', 1, 'Idli Sambar with Chutney',      70.00, '19:00', '22:30', true),
+    ('2026-09-15', 2, 'Live Dhokla with Chutney',      60.00, '19:00', '22:30', true),
     ('2026-09-16', 3, 'Moong Pulao',                   50.00, '19:00', '22:30', true),
     ('2026-09-17', 4, 'Sev Usal with Pav',             80.00, '19:00', '22:30', true),
     ('2026-09-18', 5, 'Chhole Bhature with Chaas',     90.00, '19:00', '22:30', true),

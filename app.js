@@ -179,6 +179,7 @@ const S = {
     searchServe: '', searchCollect: '', searchRoster: '',
     tab: 'serve', online: navigator.onLine, syncing: false, flushing: false,
     lastSync: LS.get('lastSync', null),
+    receiptFloor: LS.get('receiptFloor', 0),
     houseSel: null, collectSel: null, pendingServe: null,
     csMode: 'cash', eMode: 'cash', ePhoto: null,
     csGanpati: '', csQty: {}
@@ -196,6 +197,7 @@ function persist() {
     LS.set('profile', S.profile);     LS.set('device', S.device);
     LS.set('recent', S.recent);       LS.set('activeDate', S.activeDate);
     LS.set('lastSync', S.lastSync);
+    LS.set('receiptFloor', S.receiptFloor);
 }
 
 /* ─────────────────── derived indexes (rebuilt on change) ─────────────────── */
@@ -422,6 +424,27 @@ async function pullCats() {
     if (rows) { S.cats = rows; }
 }
 
+// Move every queued line of the affected collections onto free numbers.
+async function renumberQueuedReceipts(batch) {
+    const next = await serverNextReceiptNo();
+    if (!next) return false;
+    const uids = {};
+    batch.forEach(r => { if (r.collection_uid) uids[r.collection_uid] = 1; });
+    let no = next;
+    const assigned = {};
+    S.queue.contributions.forEach(r => {
+        if (!r.collection_uid || !uids[r.collection_uid]) return;
+        if (assigned[r.collection_uid] == null) assigned[r.collection_uid] = no++;
+        r.receipt_no = assigned[r.collection_uid];
+    });
+    S.receiptFloor = no;
+    persist();
+    const shown = Object.keys(assigned).map(k => receiptLabel(assigned[k])).join(', ');
+    toast('Receipt renumbered to ' + shown +
+          ' — another device had already used the old number', 'warn', 5000);
+    return true;
+}
+
 async function flush() {
     if (S.flushing || !S.online || !queueSize()) { netStatus(); return; }
     S.flushing = true; netStatus();
@@ -444,7 +467,20 @@ async function flush() {
                     const c = Object.assign({}, r);
                     delete c._local; return c;
                 });
-                const saved = await insertRows(name, payload);
+                let saved;
+                try {
+                    saved = await insertRows(name, payload);
+                } catch (err) {
+                    // Another device already used this receipt number. Take the
+                    // next free one and push again, rather than leaving the
+                    // volunteer's collection stuck in the queue forever.
+                    if (name === 'contributions' &&
+                        String(err.message).indexOf('GU_RECEIPT_TAKEN') >= 0) {
+                        const fixed = await renumberQueuedReceipts(batch);
+                        if (fixed) continue;          // retry this batch
+                    }
+                    throw err;
+                }
                 mergeLedger(name, saved || []);
                 const done = {};
                 batch.forEach(r => { done[r.client_uid] = 1; });
@@ -604,6 +640,22 @@ function undoAction(a) {
 }
 
 /* ---- receipts ---- */
+// The highest number this series has ever used, as far as the SERVER knows.
+// Asked before every collection while online, because a second device signed
+// in as the same person would otherwise issue the same number from its own
+// stale cache and hand two families the same receipt.
+async function serverNextReceiptNo() {
+    const series = S.profile.receipt_series || '';
+    if (!series || !S.online) return null;
+    try {
+        const rows = await rest('contributions?receipt_series=eq.' +
+            encodeURIComponent(series) +
+            '&select=receipt_no&order=receipt_no.desc&limit=1');
+        if (rows && rows.length && rows[0].receipt_no) return rows[0].receipt_no + 1;
+        return 1;
+    } catch (e) { return null; }
+}
+
 function nextReceiptNo() {
     const series = S.profile.receipt_series || '';
     if (!series) return null;
@@ -611,7 +663,7 @@ function nextReceiptNo() {
     allContributions().forEach(r => {
         if (r.receipt_series === series && r.receipt_no) max = Math.max(max, r.receipt_no);
     });
-    return max + 1;
+    return Math.max(max + 1, S.receiptFloor || 0);
 }
 function receiptLabel(no) {
     const series = S.profile.receipt_series || '?';
@@ -1170,6 +1222,12 @@ function openCollectSheet(h) {
     renderCollectLines();
     $('sheet-back').hidden = false;
     $('collect-sheet').hidden = false;
+    // then correct it from the server if we have signal
+    serverNextReceiptNo().then(no => {
+        if (!no || S.collectSel !== h) return;
+        if (no > (S.receiptFloor || 0)) S.receiptFloor = no;
+        $('cs-receipt').textContent = receiptLabel(nextReceiptNo());
+    });
 }
 
 function renderCollectLines() {

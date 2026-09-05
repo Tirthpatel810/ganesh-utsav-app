@@ -238,6 +238,45 @@ create unique index if not exists contrib_line_uk
     on contributions (collection_uid, purpose, coalesce(event_date, '1900-01-01'))
     where collection_uid is not null and void_of_id is null;
 
+-- ---------------------------------------------------------------------
+-- Receipt numbers are issued on the phone (max seen + 1) so that
+-- collection works at a front door with no signal. That is collision-proof
+-- only while one volunteer uses one device. Two devices signed in as the
+-- same person each compute the same "next" number and hand the same
+-- receipt to two different families.
+--
+-- A plain unique index cannot express this, because one receipt legitimately
+-- has several rows -- a Ganpati line plus a line per day. So: reject a row
+-- whose (series, number) already belongs to a DIFFERENT collection. The app
+-- catches this, takes the next free number and retries, so the volunteer
+-- never sees anything except the corrected number.
+-- ---------------------------------------------------------------------
+create or replace function public.contributions_receipt_guard()
+returns trigger language plpgsql as $$
+begin
+    if new.receipt_no is null or new.void_of_id is not null then
+        return new;
+    end if;
+    if exists (
+        select 1 from contributions
+         where receipt_series = new.receipt_series
+           and receipt_no     = new.receipt_no
+           and void_of_id is null
+           and collection_uid is distinct from new.collection_uid
+    ) then
+        raise exception
+            'GU_RECEIPT_TAKEN: receipt %/% already belongs to another collection',
+            new.receipt_series, new.receipt_no
+            using errcode = '23505';
+    end if;
+    return new;
+end $$;
+
+drop trigger if exists contributions_receipt_guard_trg on contributions;
+create trigger contributions_receipt_guard_trg
+    before insert on contributions
+    for each row execute function public.contributions_receipt_guard();
+
 -- =====================================================================
 -- 7. EXPENSES -- what the committee spent. APPEND-ONLY.
 -- =====================================================================
