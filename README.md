@@ -1,6 +1,7 @@
 # Ganesh Utsav 2026 — Shashwat Society
 
-**App:** https://tirthpatel810.github.io/ganesh-utsav-app/
+**📱 Download the app:** https://github.com/Tirthpatel810/ganesh-utsav-app/releases/latest
+**Or open in a browser:** https://tirthpatel810.github.io/ganesh-utsav-app/
 **Logins:** `~/ganesh-credentials.txt` on the Odoo machine (chmod 600)
 **Cloud:** Supabase project `jfedobsozembqfhjmubj` (Mumbai) · [dashboard](https://supabase.com/dashboard/project/jfedobsozembqfhjmubj)
 **Odoo:** `db_ganesh_shashwat` (live) and `db_ganesh_shashwat_test` (practice)
@@ -26,6 +27,23 @@ Each day is priced separately, and that matters: an extra plate is charged at
 **the price of the day it was taken**. Two extra Full Dishes cost ₹300, two
 extra Moong Pulaos cost ₹100. A single flat rate would have mis-billed every
 chargeable plate.
+
+## Getting the app onto a phone
+
+**Easiest — install the APK.** Send everyone this one link:
+
+> **https://github.com/Tirthpatel810/ganesh-utsav-app/releases/latest**
+
+Download `ganesh-utsav.apk`, open it, allow "install from this source", done.
+It appears in the app drawer like any other app. Every push rebuilds it and
+replaces the file at that same link, so the link never changes.
+
+**Or, no install at all.** Open
+https://tirthpatel810.github.io/ganesh-utsav-app/ in Chrome → menu →
+**Add to Home screen**. Same app, same offline behaviour.
+
+Either way it works with no signal once opened once, and uploads what was
+recorded offline as soon as a connection returns.
 
 ## Two halves
 
@@ -108,15 +126,44 @@ Per house you need: house code (permanent, e.g. `B-56`), grid group (`AB` or `C`
 button label (`56`, `65-66`), plates/day, and expected contribution (₹500 default).
 Merged flats are **one row, one button**.
 
+## Managing logins from Odoo
+
+**Ganesh Utsav → Configuration → App Logins.**
+
+Create a login, change someone's name or password, grant rights, or disable a
+volunteer who has handed the phone back — all from Odoo. Changes reach the app
+immediately; there is no need to open the Supabase dashboard.
+
+| Field | What it does |
+|---|---|
+| Display Name | shown in the app, printed on receipts and reports |
+| Login | what they type. Need not be a real mailbox — `counter1@ganesh.local` is fine |
+| Password | type it and save. It is sent to the cloud and **cleared from Odoo**, which keeps only a masked hint |
+| Role | *Admin* can edit the roster and approve expenses; *Volunteer* cannot |
+| Receipt Series | **one letter, unique per person** |
+| May Collect / May Record Spends | which screens they can write on |
+
+**The receipt series matters.** Each collector issues receipt numbers from
+their own letter on their own phone (`GU26/C/0042`). That is what lets
+collection work at someone's door with no signal, and why Odoo refuses to give
+two people the same letter.
+
+Already had logins before this existed? **Configuration → Import Existing
+Logins** pulls them in.
+
+## Signature on receipts
+
+Open the event → **Receipt** tab. Set the signatory name and title, and
+optionally upload a photo of the signature. Leave the image empty and the
+receipt prints a ruled line to sign by hand. Every receipt also carries a
+separate line for the collector who took the money.
+
 ## Adding a volunteer later
 
-Supabase dashboard → Authentication → Users → **Add user**, with User Metadata:
+Use **Configuration → App Logins → New** in Odoo. (The Supabase dashboard still
+works if you prefer it, but Odoo is easier and enforces the unique series.)
 
-```json
-{"display_name":"Ravi","role":"volunteer","receipt_series":"F"}
-```
-
-Use an **unused** series letter. Signup is disabled, so this is the only way in.
+Public signup is disabled, so a login created this way is the only way in.
 
 # Using it
 
@@ -160,7 +207,28 @@ row rather than deleting anything, so the audit trail stays intact.
 
 ---
 
-# Reports (Odoo)
+# Where the reports are (Odoo)
+
+Everything lives under the **Ganesh Utsav** app in the top menu.
+
+| I want… | Go to |
+|---|---|
+| One house's full statement as a PDF | **Reports → House Statements** → tick the houses → gear icon ⚙ → *House Statement*. Or open a house and press **Print Statement**. |
+| A contribution receipt | **Reports → Receipts** → find the row → printer icon. Or open it and press **Print Receipt**. |
+| Plates per day, or the peak rush hour | **Reports → Plates by Day**. It opens as a pivot; drag *Hour served* in for rush-hour analysis. |
+| What we spent, by category | **Reports → Spend by Category** |
+| Who has given what | **Houses**, then the filters *Given nothing*, *No food booked*, *Booked all 7 days*, *Owes for extra plates* |
+| Money in vs out, right now | Open the **event** — the "Where the event stands" block |
+| The real books | **Invoicing → Accounting → Journal Entries**, or filter by the *Ganesh Utsav* journal |
+| Event profit and loss | **Accounting → Reporting → Profit and Loss**, filtered on the *Ganesh Utsav 2026* analytic account |
+| Everything as a spreadsheet | Any list → tick all → ⚙ → **Export**. Or the app's **More → Export CSV** |
+
+Money reaches the books **automatically**: every sync posts newly collected
+money and newly approved expenses as journal entries. If you would rather do it
+by hand, turn off *Post to Accounting Automatically* on the event and use the
+**Post to Accounting** button instead.
+
+# Report contents
 
 - **House Statement** (PDF, per house): expected + extra plates − paid = balance
 - **Contribution Receipt** (PDF, serial numbered)
@@ -236,7 +304,10 @@ ganesh-utsav-app/                  the PWA (this repo, goes on GitHub Pages)
 ├── supabase/
 │   ├── schema.sql                 run once
 │   └── seed.sql                   edit the roster, then run
-└── .github/workflows/deploy.yml   auto-deploy on push
+├── android/                       the installable APK wrapper
+└── .github/workflows/
+    ├── deploy.yml                 publishes the web app on push
+    └── build-apk.yml              builds the APK into the "latest" release
 
 19_ent/custom_addons/ganesh_utsav/ the Odoo 19 module
 ├── models/                        event + sync engine, houses, the 3 ledgers

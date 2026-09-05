@@ -5,6 +5,10 @@ name: Deploy app to GitHub Pages
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - 'android/**'
+      - 'README.md'
+      - 'supabase/**'
   workflow_dispatch:
 
 permissions:
@@ -48,9 +52,18 @@ jobs:
           sed -i "s/ganesh-utsav-v1/ganesh-utsav-${GITHUB_SHA::8}/" sw.js
           echo "service worker cache: ganesh-utsav-${GITHUB_SHA::8}"
 
+      - name: Stage only the web app
+        run: |
+          # The repo also holds the Android wrapper and the SQL; none of that
+          # belongs on a public web host.
+          mkdir -p _site
+          cp index.html app.css app.js config.js sw.js manifest.webmanifest _site/
+          cp -r icons _site/
+          ls -R _site
+
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: .
+          path: _site
       - id: deploy
         uses: actions/deploy-pages@v4

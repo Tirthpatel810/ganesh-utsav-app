@@ -1,0 +1,80 @@
+# Builds the installable Android app and publishes it to the "latest" release,
+# so anyone on the committee can download and sideload it from one permanent link.
+name: Build APK
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'android/**'
+      - '.github/workflows/build-apk.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: android
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+
+      # Gradle comes from the action, so no wrapper jar has to live in the repo.
+      - name: Generate Gradle wrapper
+        run: gradle wrapper --gradle-version 8.11.1
+
+      - name: Build APK
+        run: ./gradlew assembleRelease --stacktrace --no-daemon
+
+      - name: Collect
+        run: |
+          mkdir -p out
+          cp app/build/outputs/apk/release/app-release.apk out/ganesh-utsav.apk
+          ls -lh out/
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ganesh-utsav-apk
+          path: android/out/*.apk
+          retention-days: 90
+          if-no-files-found: error
+
+      # A release gives a permanent link a phone can open directly, unlike
+      # artifacts which expire and need a GitHub login.
+      - name: Publish to "latest" release
+        if: github.event_name != 'pull_request'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: Ganesh Utsav — latest build
+          body: |
+            **Install on any Android phone.**
+
+            1. Download `ganesh-utsav.apk` below.
+            2. Open it. Android will ask to allow installing from this source — allow it.
+            3. Sign in with the login the committee gave you.
+
+            The app works with no signal once it has been opened once. Anything
+            recorded offline uploads by itself when the phone gets a connection.
+
+            Built from commit ${{ github.sha }}.
+          files: android/out/ganesh-utsav.apk
