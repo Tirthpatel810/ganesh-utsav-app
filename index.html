@@ -77,20 +77,18 @@
 
   <!-- ─────────── TAB: COLLECT (contributions) ─────────── -->
   <main id="tab-collect" class="tab">
-    <div class="money-strip">
+    <div class="money-strip two">
       <div><b id="c-collected">₹0</b><span>collected</span></div>
-      <div><b id="c-expected">₹0</b><span>expected</span></div>
-      <div><b id="c-pct">0%</b><span>done</span></div>
+      <div><b id="c-plates">0</b><span>plates paid for</span></div>
     </div>
-    <div class="progress"><i id="c-bar" style="width:0%"></i></div>
     <div class="search-row">
       <input id="c-search" type="search" inputmode="search" autocapitalize="none"
              autocorrect="off" spellcheck="false" placeholder="Type number or family name…">
     </div>
     <nav class="group-tabs" id="c-group-tabs"></nav>
     <div class="legend">
-      <span><i class="sw sw-none"></i>Unpaid</span><span><i class="sw sw-part"></i>Partial</span>
-      <span><i class="sw sw-full"></i>Settled</span><span><i class="sw sw-over"></i>Advance</span>
+      <span><i class="sw sw-none"></i>Nothing yet</span><span><i class="sw sw-part"></i>Some days</span>
+      <span><i class="sw sw-full"></i>All 7 days</span><span><i class="sw sw-over"></i>Ganpati only</span>
     </div>
     <div class="grid" id="collect-grid"></div>
     <p class="empty-note" id="c-grid-empty" hidden>No houses match.</p>
@@ -229,20 +227,20 @@
     <div><div class="sh-code" id="sh-code">—</div><div class="sh-name" id="sh-name">—</div></div>
     <button class="icon-btn lg" id="sheet-close" aria-label="Close">✕</button>
   </div>
-  <div class="sh-meta five">
-    <div><b id="sh-members">0</b><span>registered</span></div>
+  <div class="sh-meta">
+    <div><b id="sh-members">0</b><span>paid for today</span></div>
     <div><b id="sh-today">0</b><span>taken today</span></div>
-    <div><b id="sh-left">0</b><span>free left</span></div>
-    <div><b id="sh-extra">0</b><span>extra today</span></div>
+    <div><b id="sh-left">0</b><span>left</span></div>
     <div><b id="sh-rate">—</b><span>per plate</span></div>
   </div>
-  <div class="qty-grid" id="qty-grid"></div>
+  <button class="serve-one" id="q-one">+ 1 PLATE</button>
   <div class="qty-custom">
     <button class="icon-btn lg" id="q-minus">−</button>
     <input id="q-input" type="number" inputmode="numeric" min="1" max="99" value="1">
     <button class="icon-btn lg" id="q-plus">+</button>
     <button class="btn-primary btn-lg" id="q-serve">Serve</button>
   </div>
+  <div class="qty-grid" id="qty-grid"></div>
   <div class="sh-log" id="sh-log"></div>
 </div>
 
@@ -253,25 +251,20 @@
     <div><div class="sh-code" id="cs-code">—</div><div class="sh-name" id="cs-name">—</div></div>
     <button class="icon-btn lg" id="cs-close" aria-label="Close">✕</button>
   </div>
-  <div class="sh-meta">
-    <div><b id="cs-exp">₹0</b><span>expected</span></div>
-    <div><b id="cs-paid">₹0</b><span>paid</span></div>
-    <div><b id="cs-extra">₹0</b><span>extra plates</span></div>
-    <div><b id="cs-bal">₹0</b><span>balance</span></div>
+
+  <div class="cs-sofar" id="cs-sofar"></div>
+
+  <div class="cs-lines" id="cs-lines"></div>
+
+  <div class="cs-total">
+    <span>Collecting now</span>
+    <b id="cs-total">₹0</b>
   </div>
-  <label class="fl">Amount received ₹</label>
-  <div class="amt-row">
-    <input id="cs-amt" type="number" inputmode="decimal" min="0" step="1">
-    <div class="chip-row" id="cs-chips"></div>
-  </div>
-  <label class="fl">Mode</label>
+
   <div class="mode-row" id="cs-mode"></div>
-  <label class="fl">Note <span class="opt">optional</span></label>
-  <input id="cs-note" placeholder="e.g. paid to Rohan">
   <p class="receipt-line">Receipt <b id="cs-receipt">—</b></p>
-  <button class="btn-primary btn-lg full" id="cs-save">Collect &amp; issue receipt</button>
+  <button class="btn-primary btn-lg full" id="cs-save">Collect</button>
   <p id="cs-error" class="err" hidden></p>
-  <div class="sh-log" id="cs-log"></div>
 </div>
 
 <!-- ══════════════════ MODALS ══════════════════ -->
@@ -312,8 +305,7 @@
     <label>Button label<input id="hm-label" placeholder="56"></label>
     <label>Sort order<input id="hm-sort" type="number"></label>
     <label class="wide">Family name<input id="hm-family" placeholder="Sharma"></label>
-    <label>Plates/day<input id="hm-members" type="number" min="0" value="4"></label>
-    <label>Expected ₹<input id="hm-exp" type="number" min="0" value="500"></label>
+    <label class="wide">Family size <span class="opt">a hint only — what they pay for is what counts</span><input id="hm-members" type="number" min="0" value="4"></label>
     <label class="wide">Phone<input id="hm-phone" inputmode="tel"></label>
     <label class="wide">Notes<input id="hm-notes"></label>
     <label class="wide chk"><input id="hm-active" type="checkbox" checked> Active</label>

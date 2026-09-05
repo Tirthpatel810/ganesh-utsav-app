@@ -29,7 +29,8 @@ const POLL_MS  = Math.max(2, CFG.POLL_SECONDS || 4) * 1000;
 const QTYS     = CFG.QTY_BUTTONS || [1, 2, 3, 4, 5];
 const UNDO_S   = CFG.UNDO_WINDOW_SECONDS || 900;
 const VERSION  = '1.0.0';
-const MODES    = [['cash','Cash'],['upi','UPI'],['cheque','Cheque'],['bank','Bank'],['other','Other']];
+// Only two ways money actually arrives at a society gate.
+const MODES    = [['cash','Cash'], ['upi','UPI']];
 
 /* ─────────────────────────── helpers ─────────────────────────── */
 const $  = id => document.getElementById(id);
@@ -179,7 +180,8 @@ const S = {
     tab: 'serve', online: navigator.onLine, syncing: false, flushing: false,
     lastSync: LS.get('lastSync', null),
     houseSel: null, collectSel: null, pendingServe: null,
-    csMode: 'cash', eMode: 'cash', ePhoto: null
+    csMode: 'cash', eMode: 'cash', ePhoto: null,
+    csGanpati: '', csQty: {}
 };
 S.queue.servings      = S.queue.servings      || [];
 S.queue.contributions = S.queue.contributions || [];
@@ -197,7 +199,8 @@ function persist() {
 }
 
 /* ─────────────────── derived indexes (rebuilt on change) ─────────────────── */
-const IDX = { house: {}, plate: {}, money: {}, day: {}, cat: {}, extra: {}, extraCharge: {} };
+const IDX = { house: {}, plate: {}, money: {}, day: {}, cat: {}, extra: {}, extraCharge: {},
+               reg: {}, ganpati: {}, food: {}, regDays: {} };
 
 function allServings()      { return S.servings.concat(S.queue.servings); }
 function allContributions() { return S.contributions.concat(S.queue.contributions); }
@@ -223,26 +226,44 @@ function reindex() {
         if (r.house_id != null) d.houses[r.house_id] = (d.houses[r.house_id] || 0) + r.qty;
     });
 
-    // chargeable extra plates per house, and what they are worth at each
-    // day's own price
-    IDX.extra = {};
-    IDX.extraCharge = {};
+    // money per house, split by what it was collected FOR
+    //
+    // Registration is not a property of the house. It is what that house has
+    // PAID FOR on a given day. A family that gave only to ganpati is
+    // registered for zero plates, so every plate it takes is chargeable.
+    IDX.money = {}; IDX.ganpati = {}; IDX.food = {};
+    IDX.reg = {}; IDX.regDays = {};
+    allContributions().forEach(r => {
+        if (r.house_id == null) return;
+        const amt = num(r.amount);
+        IDX.money[r.house_id] = (IDX.money[r.house_id] || 0) + amt;
+        if (r.purpose === 'food') {
+            IDX.food[r.house_id] = (IDX.food[r.house_id] || 0) + amt;
+            if (r.event_date) {
+                const k = r.house_id + '|' + r.event_date;
+                IDX.reg[k] = (IDX.reg[k] || 0) + num(r.qty);
+                const d = IDX.regDays[r.house_id] || (IDX.regDays[r.house_id] = {});
+                d[r.event_date] = (d[r.event_date] || 0) + num(r.qty);
+            }
+        } else {
+            IDX.ganpati[r.house_id] = (IDX.ganpati[r.house_id] || 0) + amt;
+        }
+    });
+
+    // Chargeable extras = plates taken beyond what was paid for, on that day,
+    // valued at that day's price. Computed after IDX.reg is built.
+    IDX.extra = {}; IDX.extraCharge = {};
     for (const k in IDX.plate) {
         const parts = k.split('|');
         const hid = parts[0], date = parts[1];
         if (hid === 'g') continue;
-        const n = IDX.plate[k].extra;
-        if (!n) continue;
-        IDX.extra[hid] = (IDX.extra[hid] || 0) + n;
-        IDX.extraCharge[hid] = (IDX.extraCharge[hid] || 0) + n * dayRate(date);
+        const taken = IDX.plate[k].total;
+        const paidFor = IDX.reg[k] || 0;
+        const over = Math.max(0, taken - paidFor);
+        if (!over) continue;
+        IDX.extra[hid] = (IDX.extra[hid] || 0) + over;
+        IDX.extraCharge[hid] = (IDX.extraCharge[hid] || 0) + over * dayRate(date);
     }
-
-    // money per house
-    IDX.money = {};
-    allContributions().forEach(r => {
-        if (r.house_id == null) return;
-        IDX.money[r.house_id] = (IDX.money[r.house_id] || 0) + num(r.amount);
-    });
 
     IDX.cat = {};
     S.cats.forEach(c => { IDX.cat[c.id] = c; });
@@ -268,6 +289,15 @@ function dayMenu(date) {
     const d = S.days.filter(x => x.event_date === date)[0];
     return d ? (d.menu_label || '') : '';
 }
+// how many plates this house has PAID FOR on this day
+const registeredQty = (houseId, date) => IDX.reg[houseId + '|' + date] || 0;
+const ganpatiOf     = houseId => IDX.ganpati[houseId] || 0;
+const foodPaidOf    = houseId => IDX.food[houseId] || 0;
+const daysRegistered = houseId => Object.keys(IDX.regDays[houseId] || {})
+    .filter(d => IDX.regDays[houseId][d] > 0).length;
+const platesPaidFor  = houseId => Object.keys(IDX.regDays[houseId] || {})
+    .reduce((a, k) => a + IDX.regDays[houseId][k], 0);
+
 const plateTally = (houseId, date) =>
     IDX.plate[(houseId == null ? 'g' : houseId) + '|' + date] || { normal: 0, extra: 0, total: 0 };
 const paidOf = houseId => IDX.money[houseId] || 0;
@@ -276,11 +306,19 @@ const rate   = () => num(S.settings.extra_plate_rate);
 // total chargeable extra plates for a house, and their value, across all days
 const extraPlatesAllDays  = houseId => IDX.extra[houseId] || 0;
 const extraChargeAllDays  = houseId => IDX.extraCharge[houseId] || 0;
+// There is no "expected" any more. Ganpati is whatever a family chooses to
+// give, so it can never be a debt and can never show a negative. The only
+// thing a house can owe is plates taken beyond what it paid for.
 function houseBalance(h) {
-    const extra = extraChargeAllDays(h.id);      // valued per-day, not flat
-    const paid  = paidOf(h.id);
-    const exp   = num(h.contribution_expected);
-    return { expected: exp, paid: paid, extra: extra, due: exp + extra - paid };
+    const extra = extraChargeAllDays(h.id);
+    return {
+        ganpati: ganpatiOf(h.id),
+        food:    foodPaidOf(h.id),
+        total:   paidOf(h.id),
+        days:    daysRegistered(h.id),
+        extra:   extra,
+        due:     extra
+    };
 }
 
 /* ─────────────────────────── sync ─────────────────────────── */
@@ -474,9 +512,10 @@ function pushRow(name, row) {
 /* ---- food ---- */
 function planServe(house, n) {
     const t = plateTally(house.id, S.activeDate);
-    const free = Math.max(0, num(house.member_count) - t.normal);
+    const paidFor = registeredQty(house.id, S.activeDate);
+    const free = Math.max(0, paidFor - t.total);
     const normal = Math.min(n, free);
-    return { tally: t, free: free, normal: normal, extra: n - normal };
+    return { tally: t, paidFor: paidFor, free: free, normal: normal, extra: n - normal };
 }
 
 function commitServe(house, normalQty, extraQty, isGuest) {
@@ -581,13 +620,14 @@ function receiptLabel(no) {
 }
 
 /* ---- collection ---- */
-function commitCollect(house, donorName, amount, mode, note) {
+function commitCollect(house, donorName, amount, mode, note) {   // donors only
     amount = num(amount);
     if (amount <= 0) { return 'Enter an amount'; }
     const no = nextReceiptNo();
     if (!no) return 'This volunteer has no receipt series. An admin must set one.';
     pushRow('contributions', {
         house_id: house ? house.id : null, donor_name: house ? '' : (donorName || '').trim(),
+        purpose: 'ganpati', event_date: null, qty: null, collection_uid: uid(),
         amount: amount, mode: mode || 'cash',
         receipt_series: S.profile.receipt_series, receipt_no: no,
         collected_by: S.profile.display_name || '',
@@ -694,13 +734,19 @@ function filterHouses(group, search) {
         : a.wing_group.localeCompare(b.wing_group));
 }
 
+// A-1 and C-1 both used to render as "1", so switching wings looked like
+// nothing had happened. The button now carries the wing letter.
+function shortCode(h) {
+    const wing = String(h.house_code || '').split('-')[0];
+    return wing + String(h.number_label);
+}
 function houseButton(h, cls, badge) {
     const b = document.createElement('button');
     b.className = 'hbtn ' + cls + (h.is_active ? '' : ' inactive');
-    const lab = String(h.number_label);
+    const lab = shortCode(h);
     b.innerHTML =
         (badge ? '<span class="cnt">' + esc(badge) + '</span>' : '') +
-        '<span class="n' + (lab.length > 3 ? ' long' : '') + '">' + esc(lab) + '</span>' +
+        '<span class="n' + (lab.length > 4 ? ' long' : '') + '">' + esc(lab) + '</span>' +
         (h.family_name ? '<span class="fam">' + esc(h.family_name) + '</span>' : '');
     return b;
 }
@@ -737,28 +783,27 @@ function renderServe() {
 
 /* ---- collect grid ---- */
 function renderCollect() {
-    let collected = 0, expected = 0;
-    S.houses.forEach(h => { if (h.is_active) expected += num(h.contribution_expected); });
-    allContributions().forEach(r => { collected += num(r.amount); });
+    let collected = 0, platesPaid = 0;
+    allContributions().forEach(r => {
+        collected += num(r.amount);
+        if (r.purpose === 'food') platesPaid += num(r.qty);
+    });
     $('c-collected').textContent = money(collected);
-    $('c-expected').textContent  = money(expected);
-    const pct = expected > 0 ? Math.round(collected / expected * 100) : 0;
-    $('c-pct').textContent = pct + '%';
-    $('c-bar').style.width = clamp(pct, 0, 100) + '%';
+    $('c-plates').textContent = platesPaid;
 
+    const nDays = S.days.length || 7;
     const list = filterHouses(S.groupCollect, S.searchCollect);
     const host = $('collect-grid');
     host.innerHTML = '';
     list.forEach(h => {
         const b0 = houseBalance(h);
         let cls = 'none';
-        if (b0.paid <= 0) cls = 'none';
-        else if (b0.due <= -1) cls = 'over';
-        else if (b0.due <= 0) cls = 'full';
-        else cls = 'part';
-        const b = houseButton(h, cls, b0.paid > 0
-            ? (b0.paid >= 1000 ? Math.round(b0.paid / 1000) + 'k' : Math.round(b0.paid))
-            : '');
+        if (b0.days >= nDays)      cls = 'full';     // registered for every day
+        else if (b0.days > 0)      cls = 'part';     // some days
+        else if (b0.total > 0)     cls = 'over';     // gave ganpati only
+        const badge = b0.days > 0 ? b0.days + 'd'
+                    : (b0.total > 0 ? '\u20b9' : '');
+        const b = houseButton(h, cls, badge);
         b.onclick = () => openCollectSheet(h);
         host.appendChild(b);
     });
@@ -850,7 +895,7 @@ function renderLive() {
         if (!h.is_active) return;
         const b = houseBalance(h);
         extraDue += b.extra;
-        if (b.paid > 0) paid++; else { unpaid++; unpaidNames.push(h.house_code); }
+        if (b.total > 0) paid++; else { unpaid++; unpaidNames.push(h.house_code); }
     });
     $('m-in').textContent    = money(cin);
     $('m-out').textContent   = money(cout);
@@ -939,8 +984,12 @@ function renderLog(host, acts, limit) {
             const r = a.row, h = r.house_id != null ? IDX.house[r.house_id] : null;
             main = h ? esc(h.house_code) + (h.family_name ? ' · ' + esc(h.family_name) : '')
                      : esc(r.donor_name || 'Donor') + '<span class="tag g">outside</span>';
-            sub = hhmm(a.at) + ' · ' + String(r.mode).toUpperCase() +
-                  (r.receipt_no ? ' · ' + receiptLabel(r.receipt_no) : '') ;
+            const what = r.purpose === 'food'
+                ? (dayMenu(r.event_date) || r.event_date) + ' x' + (r.qty || 0)
+                : 'Ganpati';
+            sub = what + ' · ' + hhmm(a.at) + ' · ' +
+                  String(r.mode).toUpperCase() +
+                  (r.receipt_no ? ' · ' + receiptLabel(r.receipt_no) : '');
             amtTxt = money(r.amount); amtCls = 'amt in';
         } else {
             const r = a.row, c = IDX.cat[r.category_id];
@@ -1042,23 +1091,31 @@ function closeModals() {
 function openServeSheet(h) {
     S.houseSel = h;
     const t = plateTally(h.id, S.activeDate);
-    const free = Math.max(0, num(h.member_count) - t.normal);
+    const paidFor = registeredQty(h.id, S.activeDate);
+    const free = Math.max(0, paidFor - t.total);
+    const r = dayRate(S.activeDate);
+
     $('sh-code').textContent = h.house_code;
     $('sh-name').textContent = h.family_name || 'No name recorded';
-    $('sh-members').textContent = h.member_count;
+    $('sh-members').textContent = paidFor;     // paid for today, NOT family size
     $('sh-today').textContent = t.total;
     $('sh-left').textContent = free;
-    $('sh-extra').textContent = t.extra;
-    const r = dayRate(S.activeDate);
-    $('sh-rate').textContent = r > 0 ? money(r) : '—';
+    $('sh-rate').textContent = r > 0 ? money(r) : '\u2014';
 
+    // one big tap is the normal case
+    const one = $('q-one');
+    one.className = 'serve-one' + (free < 1 ? ' over' : '');
+    one.textContent = free < 1 ? '+ 1 PLATE  (extra ' + money(r) + ')' : '+ 1 PLATE';
+    one.onclick = () => serveHouse(h, 1);
+
+    // the grid stays for a family collecting together
     const g = $('qty-grid');
     g.innerHTML = '';
-    QTYS.forEach(n => {
+    QTYS.filter(x => x > 1).forEach(qn => {
         const b = document.createElement('button');
-        b.className = 'qbtn' + (n > free ? ' over' : '');
-        b.textContent = n;
-        b.onclick = () => serveHouse(h, n);
+        b.className = 'qbtn' + (qn > free ? ' over' : '');
+        b.textContent = qn;
+        b.onclick = () => serveHouse(h, qn);
         g.appendChild(b);
     });
     $('q-input').value = Math.max(1, free || 1);
@@ -1072,19 +1129,25 @@ function askExtra(h, n, p) {
     S.pendingServe = { house: h, plan: p };
     const r = dayRate(S.activeDate);
     const menu = dayMenu(S.activeDate);
-    $('xm-title').textContent = h.house_code + ' has already taken its registered plates';
+    const paid = p.paidFor;
+    $('xm-title').textContent = paid > 0
+        ? h.house_code + ' has taken all the plates it paid for'
+        : h.house_code + ' has not paid for today';
     $('xm-body').innerHTML = esc(h.house_code) +
         (h.family_name ? ' (' + esc(h.family_name) + ')' : '') +
-        ' is registered for <b>' + h.member_count + ' plates</b> a day and has taken <b>' +
-        p.tally.normal + '</b> today. Allowing this adds <b>' + p.extra +
-        ' extra plate' + (p.extra > 1 ? 's' : '') + '</b>' +
-        (r > 0 ? ', chargeable at <b>' + money(r) + '</b> each' +
-                 (menu ? ' (today is ' + esc(menu) + ')' : '') +
-                 ' and recovered later.' : '.');
+        (paid > 0
+            ? ' paid for <b>' + paid + ' plate' + (paid > 1 ? 's' : '') + '</b> today and has taken <b>' +
+              p.tally.total + '</b>.'
+            : ' has not paid for any plates ' + (menu ? 'on ' + esc(menu) + ' ' : '') + 'today.') +
+        ' Giving ' + n + ' more adds <b>' + p.extra + ' extra plate' +
+        (p.extra > 1 ? 's' : '') + '</b>' +
+        (r > 0 ? ', chargeable at <b>' + money(r) + '</b> each and recovered later.' : '.');
     $('xm-split').innerHTML =
-        'Covered by contribution <b>' + p.normal + '</b>' +
+        'Paid for today <b>' + paid + '</b>' +
+        '<br>Already taken <b>' + p.tally.total + '</b>' +
+        '<br>Covered by what they paid <b>' + p.normal + '</b>' +
         '<br>Extra (chargeable) <b>' + p.extra + '</b>' +
-        (r > 0 ? '<br>Amount added to their statement <b>' + money(p.extra * r) + '</b>' : '');
+        (r > 0 ? '<br>Added to their statement <b>' + money(p.extra * r) + '</b>' : '');
     $('xm-ok').textContent = 'Allow ' + p.extra + ' extra';
     $('modal-back').hidden = false;
     $('extra-modal').hidden = false;
@@ -1093,37 +1156,136 @@ function askExtra(h, n, p) {
 
 function openCollectSheet(h) {
     S.collectSel = h;
-    const b = houseBalance(h);
+    // one line per bucket: ganpati, then one per event day
+    S.csGanpati = '';
+    S.csQty = {};
+    S.days.forEach(d => { S.csQty[d.event_date] = 0; });
+    S.csMode = 'cash';
+
     $('cs-code').textContent = h.house_code;
     $('cs-name').textContent = h.family_name || 'No name recorded';
-    $('cs-exp').textContent   = money(b.expected);
-    $('cs-paid').textContent  = money(b.paid);
-    $('cs-extra').textContent = money(b.extra);
-    $('cs-bal').textContent   = money(b.due);
-    const suggest = b.due > 0 ? Math.round(b.due) : Math.round(b.expected);
-    $('cs-amt').value = suggest;
-    S.csMode = 'cash';
-    renderModeRow('cs-mode', () => S.csMode, setCsMode);
-    const chips = $('cs-chips');
-    chips.innerHTML = '';
-    const opts = [];
-    if (b.due > 0) opts.push(['Balance ' + money(b.due), Math.round(b.due)]);
-    opts.push([money(b.expected), Math.round(b.expected)]);
-    [100, 251, 500, 1001, 2100].forEach(v => opts.push([money(v), v]));
-    opts.forEach((o, i) => {
-        const c = document.createElement('button');
-        c.textContent = o[0];
-        if (i === 0) c.className = 'hl';
-        c.onclick = () => { $('cs-amt').value = o[1]; };
-        chips.appendChild(c);
-    });
-    $('cs-note').value = '';
     $('cs-error').hidden = true;
+    renderModeRow('cs-mode', () => S.csMode, setCsMode);
     $('cs-receipt').textContent = receiptLabel(nextReceiptNo());
-    renderLog($('cs-log'), activityFor(null).filter(a =>
-        a.kind === 'collect' && a.row.house_id === h.id), 6);
+    renderCollectLines();
     $('sheet-back').hidden = false;
     $('collect-sheet').hidden = false;
+}
+
+function renderCollectLines() {
+    const h = S.collectSel;
+    if (!h) return;
+    const b = houseBalance(h);
+
+    // what this house has already given
+    const bits = [];
+    if (b.ganpati) bits.push('Ganpati <b>' + money(b.ganpati) + '</b>');
+    if (b.food)    bits.push('Food <b>' + money(b.food) + '</b> for <b>' + b.days + '</b> day' +
+                             (b.days === 1 ? '' : 's'));
+    if (b.extra)   bits.push('<span style="color:#fca5a5">Extra plates owed <b>' +
+                             money(b.extra) + '</b></span>');
+    $('cs-sofar').innerHTML = bits.length
+        ? 'Already given: ' + bits.join(' &nbsp;·&nbsp; ')
+        : 'Nothing given yet.';
+
+    const host = $('cs-lines');
+    host.innerHTML = '';
+
+    // ---- ganpati: any amount, no expectation ----
+    const g = document.createElement('div');
+    g.className = 'csrow ganpati';
+    g.innerHTML = '<div class="cl"><b>Ganpati donation</b>' +
+        '<span>Any amount' + (b.ganpati ? ' \u00b7 <span class="paid">already ' +
+        esc(money(b.ganpati)) + '</span>' : '') + '</span></div>';
+    const gi = document.createElement('input');
+    gi.className = 'amt-in'; gi.type = 'number'; gi.inputMode = 'decimal';
+    gi.min = '0'; gi.placeholder = '0'; gi.value = S.csGanpati;
+    gi.oninput = e => { S.csGanpati = e.target.value; updateCollectTotal(); };
+    g.appendChild(gi);
+    host.appendChild(g);
+
+    // ---- one row per day: fixed price, choose how many plates ----
+    S.days.forEach(d => {
+        const rate = dayRate(d.event_date);
+        const already = registeredQty(h.id, d.event_date);
+        const qty = S.csQty[d.event_date] || 0;
+        const row = document.createElement('div');
+        row.className = 'csrow' + (already > 0 ? ' done' : '');
+        row.innerHTML =
+            '<div class="cl"><b>' + esc(d.menu_label || 'Day ' + d.day_no) + '</b>' +
+            '<span>' + esc(d.event_date.slice(8) + '/' + d.event_date.slice(5, 7)) +
+            ' \u00b7 ' + esc(money(rate)) + ' each' +
+            (already > 0 ? ' \u00b7 <span class="paid">' + already + ' paid</span>' : '') +
+            '</span></div>';
+
+        const st = document.createElement('div');
+        st.className = 'stepper';
+        const minus = document.createElement('button');
+        minus.textContent = '\u2212';
+        minus.onclick = () => { S.csQty[d.event_date] = Math.max(0, qty - 1); renderCollectLines(); };
+        const q = document.createElement('div');
+        q.className = 'q'; q.textContent = qty;
+        const plus = document.createElement('button');
+        plus.textContent = '+';
+        plus.onclick = () => { S.csQty[d.event_date] = Math.min(99, qty + 1); renderCollectLines(); };
+        st.appendChild(minus); st.appendChild(q); st.appendChild(plus);
+        row.appendChild(st);
+
+        const line = document.createElement('div');
+        line.className = 'line' + (qty > 0 ? ' on' : '');
+        line.textContent = qty > 0 ? money(qty * rate) : '\u2014';
+        row.appendChild(line);
+        host.appendChild(row);
+    });
+
+    updateCollectTotal();
+}
+
+function collectTotal() {
+    let t = num(S.csGanpati);
+    S.days.forEach(d => { t += (S.csQty[d.event_date] || 0) * dayRate(d.event_date); });
+    return t;
+}
+
+function updateCollectTotal() {
+    const t = collectTotal();
+    $('cs-total').textContent = money(t);
+    $('cs-save').textContent = t > 0 ? 'Collect ' + money(t) : 'Collect';
+    $('cs-save').disabled = t <= 0;
+}
+
+function saveCollection() {
+    const h = S.collectSel;
+    if (!h) return;
+    const total = collectTotal();
+    if (total <= 0) { showErr('cs-error', 'Nothing to collect yet'); return; }
+    const no = nextReceiptNo();
+    if (!no) { showErr('cs-error',
+        'This volunteer has no receipt series. An admin must set one.'); return; }
+
+    // One collection = one receipt number = several lines sharing a collection_uid.
+    const cuid = uid(), now = new Date().toISOString();
+    const base = {
+        house_id: h.id, donor_name: '', mode: S.csMode,
+        receipt_series: S.profile.receipt_series, receipt_no: no,
+        collected_by: S.profile.display_name || '',
+        collected_by_uid: AUTH.s && AUTH.s.user ? AUTH.s.user.id : null,
+        notes: '', void_of_id: null, collection_uid: cuid, collected_at: now
+    };
+    const gan = num(S.csGanpati);
+    if (gan > 0) pushRow('contributions', Object.assign({}, base, {
+        purpose: 'ganpati', event_date: null, qty: null,
+        amount: gan, client_uid: uid() }));
+    S.days.forEach(d => {
+        const q = S.csQty[d.event_date] || 0;
+        if (q <= 0) return;
+        pushRow('contributions', Object.assign({}, base, {
+            purpose: 'food', event_date: d.event_date, qty: q,
+            amount: q * dayRate(d.event_date), client_uid: uid() }));
+    });
+    buzz([30, 50, 30]);
+    toast(h.house_code + '  ' + money(total) + '  \u00b7  ' + receiptLabel(no), 'ok', 3200);
+    closeSheets();
 }
 
 function renderModeRow(hostId, getter, setter) {
@@ -1149,7 +1311,6 @@ function openHouseModal(h) {
     $('hm-sort').value    = h ? h.sort_order : '';
     $('hm-family').value  = h ? h.family_name : '';
     $('hm-members').value = h ? h.member_count : 4;
-    $('hm-exp').value     = h ? h.contribution_expected : num(S.settings.contribution_default) || 500;
     $('hm-phone').value   = h ? h.phone : '';
     $('hm-notes').value   = h ? h.notes : '';
     $('hm-active').checked = h ? h.is_active : true;
@@ -1166,7 +1327,6 @@ async function saveHouse() {
         sort_order: parseInt($('hm-sort').value, 10) || 0,
         family_name: $('hm-family').value.trim(),
         member_count: parseInt($('hm-members').value, 10) || 0,
-        contribution_expected: num($('hm-exp').value),
         phone: $('hm-phone').value.trim(),
         notes: $('hm-notes').value.trim(),
         is_active: $('hm-active').checked
@@ -1221,13 +1381,14 @@ function exportCsv() {
     rows.push(['GANESH UTSAV EXPORT', new Date().toISOString()]);
     rows.push([]);
     rows.push(['HOUSE STATEMENT']);
-    rows.push(['house_code','family','group','plates_per_day','expected','paid',
-               'extra_plates','extra_charge','balance_due','plates_total']);
+    rows.push(['house_code','family','group','ganpati_given','food_paid','total_given',
+               'plates_paid_for','days_registered','plates_taken','extra_plates',
+               'extra_charge','balance_due']);
     S.houses.forEach(h => {
         const b = houseBalance(h);
-        const tot = platesAllDays(h.id);
-        rows.push([h.house_code, h.family_name, h.wing_group, h.member_count,
-                   b.expected, b.paid, extraPlatesAllDays(h.id), b.extra, b.due, tot]);
+        rows.push([h.house_code, h.family_name, h.wing_group, b.ganpati, b.food, b.total,
+                   platesPaidFor(h.id), b.days, platesAllDays(h.id),
+                   extraPlatesAllDays(h.id), b.extra, b.due]);
     });
     rows.push([]);
     rows.push(['PLATE LEDGER']);
@@ -1239,12 +1400,15 @@ function exportCsv() {
     });
     rows.push([]);
     rows.push(['CONTRIBUTIONS']);
-    rows.push(['receipt','date','house_or_donor','amount','mode','collected_by','note']);
+    rows.push(['receipt','date','house_or_donor','purpose','for_day','plates',
+               'amount','mode','collected_by','note']);
     allContributions().forEach(r => {
         const h = r.house_id != null ? IDX.house[r.house_id] : null;
         rows.push([(r.receipt_series || '') + '/' + (r.receipt_no || ''),
                    (r.collected_at || '').slice(0, 10),
-                   h ? h.house_code : r.donor_name, r.amount, r.mode, r.collected_by, r.notes]);
+                   h ? h.house_code : r.donor_name, r.purpose || 'ganpati',
+                   r.event_date || '', r.qty || '',
+                   r.amount, r.mode, r.collected_by, r.notes]);
     });
     rows.push([]);
     rows.push(['EXPENSES']);
@@ -1286,6 +1450,7 @@ function wire() {
     $('q-minus').onclick = () => { $('q-input').value = Math.max(1, num($('q-input').value) - 1); };
     $('q-plus').onclick  = () => { $('q-input').value = Math.min(99, num($('q-input').value) + 1); };
     $('q-serve').onclick = () => { if (S.houseSel) serveHouse(S.houseSel, $('q-input').value); };
+    $('q-one').onclick = () => { if (S.houseSel) serveHouse(S.houseSel, 1); };
     $('guest-btn').onclick = () => {
         const n = prompt('How many guest plates?', '1');
         if (n == null) return;
@@ -1305,11 +1470,7 @@ function wire() {
     /* collect */
     $('c-search').oninput = e => { S.searchCollect = e.target.value; renderCollect(); };
     $('cs-close').onclick = closeSheets;
-    $('cs-save').onclick = () => {
-        const h = S.collectSel;
-        const err = commitCollect(h, null, $('cs-amt').value, S.csMode, $('cs-note').value.trim());
-        if (err) showErr('cs-error', err); else closeSheets();
-    };
+    $('cs-save').onclick = saveCollection;
     $('donor-btn').onclick = () => {
         const sel = $('dm-mode');
         sel.innerHTML = MODES.map(m => '<option value="' + m[0] + '">' + m[1] + '</option>').join('');

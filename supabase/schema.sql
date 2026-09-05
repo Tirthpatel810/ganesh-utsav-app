@@ -183,15 +183,60 @@ create table if not exists contributions (
     collected_at   timestamptz not null default now(),
     client_uid     text    unique,
     constraint contrib_amount_nonzero check (amount <> 0),
-    constraint contrib_mode_chk check (mode in ('cash','upi','cheque','bank','other')),
     constraint contrib_who_chk check (house_id is not null or donor_name <> '')
 );
--- one receipt number can exist only once inside a volunteer's own series
-create unique index if not exists contrib_receipt_uk
-    on contributions (receipt_series, receipt_no)
-    where receipt_no is not null and void_of_id is null;
-create index if not exists contrib_house_idx on contributions (house_id);
-create index if not exists contrib_date_idx  on contributions (collected_at);
+
+-- ---------------------------------------------------------------------
+-- Money is collected for EIGHT separate things, not one lump sum:
+--
+--   * ganpati  -- the general donation. Any amount, no expectation.
+--   * food     -- one line per event day. Fixed price per plate for that
+--                 day, times the number of plates the house is paying for.
+--
+-- So "registered plates" is not a property of the house at all. It is
+-- whatever that house has PAID FOR on that specific day. A house that
+-- gave Rs.501 to ganpati and bought no food is registered for zero plates
+-- on every day, and every plate it takes is chargeable.
+--
+-- One collection = one receipt number = several rows sharing a
+-- collection_uid (a receipt has lines, like any receipt).
+-- ---------------------------------------------------------------------
+alter table contributions add column if not exists purpose        text;
+alter table contributions add column if not exists event_date     date;
+alter table contributions add column if not exists qty            integer;
+alter table contributions add column if not exists collection_uid uuid;
+
+update contributions set purpose = 'ganpati' where purpose is null;
+alter table contributions alter column purpose set default 'ganpati';
+alter table contributions alter column purpose set not null;
+
+do $$ begin
+    alter table contributions add constraint contrib_purpose_chk
+        check (purpose in ('ganpati','food'));
+exception when duplicate_object then null; end $$;
+
+do $$ begin
+    -- a food line must say which day and how many plates
+    alter table contributions add constraint contrib_food_chk
+        check (purpose <> 'food' or (event_date is not null and qty is not null));
+exception when duplicate_object then null; end $$;
+
+create index if not exists contrib_purpose_idx on contributions (purpose, event_date);
+create index if not exists contrib_collection_idx on contributions (collection_uid);
+
+-- One receipt now covers several lines, so the old
+-- unique(receipt_series, receipt_no) no longer holds. Numbers are issued
+-- per volunteer series on their own phone, which is what makes offline
+-- collection collision-proof; duplicate protection for retries comes from
+-- client_uid, which is still unique.
+drop index if exists contrib_receipt_uk;
+create index if not exists contrib_receipt_idx
+    on contributions (receipt_series, receipt_no);
+
+-- but within ONE collection a given purpose/day may appear only once
+create unique index if not exists contrib_line_uk
+    on contributions (collection_uid, purpose, coalesce(event_date, '1900-01-01'))
+    where collection_uid is not null and void_of_id is null;
 
 -- =====================================================================
 -- 7. EXPENSES -- what the committee spent. APPEND-ONLY.
@@ -266,6 +311,7 @@ end $$;
 -- on an existing project.
 -- =====================================================================
 drop view if exists v_day_totals        cascade;
+drop view if exists v_house_day          cascade;
 drop view if exists v_house_statement   cascade;
 drop view if exists v_money_summary     cascade;
 drop view if exists v_expense_by_category cascade;
@@ -296,63 +342,104 @@ select d.event_date, d.day_no, d.menu_label,
 from event_days d
 left join agg a on a.event_date = d.event_date;
 
--- THE key report: one line per house -- money owed, money paid, plates taken,
--- chargeable extras valued at each day's own price, and the balance still due.
+-- Registration is NOT a property of the house. It is what that house has
+-- PAID FOR on that specific day. This view is the single source of truth for
+-- "how many plates is this house entitled to today".
+create or replace view v_house_day as
+select h.id                                   as house_id,
+       h.house_code,
+       d.event_date,
+       d.day_no,
+       d.menu_label,
+       coalesce(d.plate_rate, 0)              as plate_rate,
+       coalesce(r.registered_qty, 0)          as registered_qty,
+       coalesce(r.paid, 0)                    as paid,
+       coalesce(s.taken, 0)                   as taken,
+       greatest(coalesce(s.taken, 0) - coalesce(r.registered_qty, 0), 0) as over_taken
+from houses h
+cross join event_days d
+left join (
+    select house_id, event_date,
+           sum(qty)    as registered_qty,
+           sum(amount) as paid
+    from contributions
+    where purpose = 'food' and house_id is not null
+    group by house_id, event_date) r
+  on r.house_id = h.id and r.event_date = d.event_date
+left join (
+    select house_id, event_date, sum(qty) as taken
+    from servings where house_id is not null
+    group by house_id, event_date) s
+  on s.house_id = h.id and s.event_date = d.event_date;
+
+-- THE key report: one line per house.
+--
+-- There is no "expected contribution" any more. Ganpati is whatever a family
+-- chooses to give, so it can never be a debt and can never show a negative.
+-- The only thing a house can owe is plates taken beyond what it paid for,
+-- valued at the price of the day they were taken.
 create or replace view v_house_statement as
 with cfg as (select extra_plate_rate from app_settings where id = 1),
-plates as (
-    select s.house_id,
-           sum(s.qty)                                    as plates_total,
-           sum(s.qty) filter (where s.is_extra)           as plates_extra,
-           -- value every extra plate at the price of the day it was taken
-           sum(case when s.is_extra
-                    then s.qty * coalesce(d.plate_rate, c.extra_plate_rate, 0)
-                    else 0 end)                           as extra_charge
-    from servings s
-    cross join cfg c
-    left join event_days d on d.event_date = s.event_date
-    where s.house_id is not null
-    group by s.house_id),
-attended as (
-    -- only days with a positive net count as attended
-    select house_id, count(*) as days_attended
-    from (select house_id, event_date
-            from servings where house_id is not null
-           group by house_id, event_date
-          having sum(qty) > 0) q
-    group by house_id),
 money as (
-    select house_id, sum(amount) as contributed, max(collected_at) as last_paid
-    from contributions where house_id is not null group by house_id)
-select h.id                                        as house_id,
+    select house_id,
+           sum(amount)                                       as total_given,
+           sum(amount) filter (where purpose = 'ganpati')     as ganpati_given,
+           sum(amount) filter (where purpose = 'food')        as food_paid,
+           sum(qty)    filter (where purpose = 'food')        as plates_paid_for,
+           count(distinct event_date) filter (where purpose = 'food') as days_registered,
+           max(collected_at)                                  as last_paid
+    from contributions where house_id is not null group by house_id),
+plates as (
+    select house_id,
+           sum(qty)                                           as plates_total,
+           count(distinct event_date) filter (where true)      as days_touched
+    from servings where house_id is not null group by house_id),
+attended as (
+    select house_id, count(*) as days_attended
+    from (select house_id, event_date from servings where house_id is not null
+           group by house_id, event_date having sum(qty) > 0) q
+    group by house_id),
+-- plates taken beyond what was paid for, priced per day
+over as (
+    select hd.house_id,
+           sum(hd.over_taken)                          as plates_extra,
+           sum(hd.over_taken * coalesce(nullif(hd.plate_rate, 0), c.extra_plate_rate, 0))
+                                                       as extra_charge
+    from v_house_day hd cross join cfg c
+    group by hd.house_id)
+select h.id                                   as house_id,
        h.house_code, h.wing_group, h.number_label,
        h.family_name, h.member_count, h.phone, h.is_active,
-       h.contribution_expected,
-       coalesce(m.contributed,   0)                as contributed,
-       coalesce(p.plates_total,  0)                as plates_total,
-       coalesce(p.plates_extra,  0)                as plates_extra,
-       coalesce(a.days_attended, 0)                as days_attended,
-       coalesce(p.extra_charge,  0)                as extra_charge,
-       h.contribution_expected
-         + coalesce(p.extra_charge, 0)
-         - coalesce(m.contributed, 0)              as balance_due,
+       coalesce(m.ganpati_given,   0)         as ganpati_given,
+       coalesce(m.food_paid,       0)         as food_paid,
+       coalesce(m.total_given,     0)         as total_given,
+       coalesce(m.plates_paid_for, 0)         as plates_paid_for,
+       coalesce(m.days_registered, 0)         as days_registered,
+       coalesce(p.plates_total,    0)         as plates_total,
+       coalesce(a.days_attended,   0)         as days_attended,
+       coalesce(o.plates_extra,    0)         as plates_extra,
+       coalesce(o.extra_charge,    0)         as extra_charge,
+       coalesce(o.extra_charge,    0)         as balance_due,
        m.last_paid
 from houses h
+left join money    m on m.house_id = h.id
 left join plates   p on p.house_id = h.id
 left join attended a on a.house_id = h.id
-left join money    m on m.house_id = h.id;
+left join over     o on o.house_id = h.id;
 
--- event money summary: in vs out vs balance
+-- event money summary: what came in, what went out, what is in hand
 create or replace view v_money_summary as
 select
-    (select coalesce(sum(amount),0) from contributions)                       as collected_total,
-    (select coalesce(sum(amount),0) from contributions where house_id is not null) as collected_houses,
-    (select coalesce(sum(amount),0) from contributions where house_id is null)     as collected_donors,
-    (select coalesce(sum(amount),0) from expenses)                            as spent_total,
-    (select coalesce(sum(amount),0) from expenses where status = 'approved')  as spent_approved,
-    (select coalesce(sum(contribution_expected),0) from houses where is_active) as expected_total,
+    (select coalesce(sum(amount),0) from contributions)                              as collected_total,
+    (select coalesce(sum(amount),0) from contributions where purpose='ganpati')      as collected_ganpati,
+    (select coalesce(sum(amount),0) from contributions where purpose='food')         as collected_food,
+    (select coalesce(sum(amount),0) from contributions where house_id is null)       as collected_donors,
+    (select coalesce(sum(qty),0)    from contributions where purpose='food')         as plates_paid_for,
+    (select coalesce(sum(amount),0) from expenses)                                   as spent_total,
+    (select coalesce(sum(amount),0) from expenses where status='approved')           as spent_approved,
+    (select coalesce(sum(extra_charge),0) from v_house_statement)                    as extra_due_total,
     (select coalesce(sum(amount),0) from contributions)
-      - (select coalesce(sum(amount),0) from expenses)                        as balance_in_hand;
+      - (select coalesce(sum(amount),0) from expenses)                               as balance_in_hand;
 
 create or replace view v_expense_by_category as
 select c.id as category_id, c.code, c.name, c.sort_order,
