@@ -182,7 +182,7 @@ create table if not exists contributions (
     void_of_id     bigint  references contributions (id),
     collected_at   timestamptz not null default now(),
     client_uid     text    unique,
-    constraint contrib_amount_nonzero check (amount <> 0),
+    constraint contrib_amount_nonzero check (amount <> 0),   -- relaxed below
     constraint contrib_who_chk check (house_id is not null or donor_name <> '')
 );
 
@@ -219,6 +219,15 @@ do $$ begin
     -- a food line must say which day and how many plates
     alter table contributions add constraint contrib_food_chk
         check (purpose <> 'food' or (event_date is not null and qty is not null));
+exception when duplicate_object then null; end $$;
+
+-- A sponsor's pass is a real entitlement with no money behind it: plates were
+-- promised, nothing was collected. So a food line may carry qty with a zero
+-- amount. A zero-value Ganpati row still means nothing and stays forbidden.
+do $$ begin
+    alter table contributions drop constraint if exists contrib_amount_nonzero;
+    alter table contributions add constraint contrib_amount_chk
+        check (amount <> 0 or (purpose = 'food' and qty > 0));
 exception when duplicate_object then null; end $$;
 
 create index if not exists contrib_purpose_idx on contributions (purpose, event_date);

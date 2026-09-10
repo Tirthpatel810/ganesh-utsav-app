@@ -416,7 +416,15 @@ async function reconcileHouses() {
             // something was added or removed: take the whole roster afresh.
             // It is under a hundred rows, so this is cheaper than being clever.
             const full = await rest('houses?select=*&order=id.asc&limit=5000');
-            if (full) { S.houses = full; S.cursors.houses = EPOCH; }
+            if (full) {
+                S.houses = full;
+                // We already hold every row, so park the cursor at the newest
+                // timestamp rather than rewinding it -- rewinding would re-pull
+                // the whole roster on the next poll, every four seconds, on a
+                // phone paying for the data.
+                const stamps = full.map(h => h.updated_at).filter(Boolean).sort();
+                if (stamps.length) S.cursors.houses = stamps[stamps.length - 1];
+            }
         }
     } catch (e) { /* offline */ }
 }
