@@ -180,6 +180,7 @@ const S = {
     tab: 'serve', online: navigator.onLine, syncing: false, flushing: false,
     lastSync: LS.get('lastSync', null),
     receiptFloor: LS.get('receiptFloor', 0),
+    rejected: LS.get('rejected', []),
     houseSel: null, collectSel: null, pendingServe: null,
     csMode: 'cash', eMode: 'cash', ePhoto: null,
     csGanpati: '', csQty: {}
@@ -198,6 +199,7 @@ function persist() {
     LS.set('recent', S.recent);       LS.set('activeDate', S.activeDate);
     LS.set('lastSync', S.lastSync);
     LS.set('receiptFloor', S.receiptFloor);
+    LS.set('rejected', S.rejected);
 }
 
 /* ─────────────────── derived indexes (rebuilt on change) ─────────────────── */
@@ -343,6 +345,25 @@ function netStatus() {
     else setNet('ok', 'Online · synced' + (S.lastSync ? ' ' + hhmm(S.lastSync) : ''), 0);
 }
 
+// A cursor is only safe while ids keep climbing. If the table was truncated
+// and restarted, every id is now BELOW our cursor and "id > cursor" returns
+// nothing forever -- the phone silently shows stale data and never recovers.
+// So before walking forward, check the server's highest id.
+async function detectReset(table, cursorKey, listName) {
+    const cur = S.cursors[cursorKey];
+    if (typeof cur !== 'number' || cur <= 0) return;
+    try {
+        const top = await rest(table + '?select=id&order=id.desc&limit=1');
+        const maxId = (top && top.length) ? top[0].id : 0;
+        if (maxId < cur) {
+            console.warn('table', table, 'was reset (max', maxId, '< cursor', cur, ') — reloading');
+            S.cursors[cursorKey] = 0;
+            if (listName) S[listName] = [];
+            toast('Server data was reset — reloading', 'warn', 3000);
+        }
+    } catch (e) { /* offline: leave the cursor alone */ }
+}
+
 async function pullPaged(table, cursorKey, orderCol) {
     const col = orderCol || 'id';
     let cur = S.cursors[cursorKey], got = [], guard = 0;
@@ -379,6 +400,27 @@ function upsertMaster(listName, rows) {
     });
 }
 
+// An updated_at cursor can bring new and changed houses down, but it can never
+// tell us a house was DELETED -- a removed flat would linger on every phone
+// forever. Comparing the id list costs about a kilobyte, so do it every sync.
+async function reconcileHouses() {
+    try {
+        const ids = await rest('houses?select=id&order=id.asc&limit=5000');
+        if (!ids) return;
+        const server = {};
+        ids.forEach(r => { server[r.id] = 1; });
+        const before = S.houses.length;
+        S.houses = S.houses.filter(h => server[h.id]);
+        const missing = ids.filter(r => !S.houses.some(h => h.id === r.id)).length;
+        if (S.houses.length !== before || missing) {
+            // something was added or removed: take the whole roster afresh.
+            // It is under a hundred rows, so this is cheaper than being clever.
+            const full = await rest('houses?select=*&order=id.asc&limit=5000');
+            if (full) { S.houses = full; S.cursors.houses = EPOCH; }
+        }
+    } catch (e) { /* offline */ }
+}
+
 async function bootstrap() {
     S.cursors = { servings: 0, contributions: 0, expenses: 0, houses: EPOCH, cats: EPOCH };
     S.servings = []; S.contributions = []; S.expenses = []; S.houses = []; S.cats = [];
@@ -402,8 +444,12 @@ async function syncNow(full) {
         if (days) S.days = days;
 
         upsertMaster('houses', await pullPaged('houses', 'houses', 'updated_at'));
+        await reconcileHouses();
         await pullCats();
 
+        await detectReset('servings',      'servings',      'servings');
+        await detectReset('contributions', 'contributions', 'contributions');
+        await detectReset('expenses',      'expenses',      'expenses');
         mergeLedger('servings',      await pullPaged('servings', 'servings'));
         mergeLedger('contributions', await pullPaged('contributions', 'contributions'));
         mergeLedger('expenses',      await pullPaged('expenses', 'expenses'));
@@ -471,13 +517,29 @@ async function flush() {
                 try {
                     saved = await insertRows(name, payload);
                 } catch (err) {
+                    const msg = String(err.message || '');
                     // Another device already used this receipt number. Take the
                     // next free one and push again, rather than leaving the
                     // volunteer's collection stuck in the queue forever.
-                    if (name === 'contributions' &&
-                        String(err.message).indexOf('GU_RECEIPT_TAKEN') >= 0) {
+                    if (name === 'contributions' && msg.indexOf('GU_RECEIPT_TAKEN') >= 0) {
                         const fixed = await renumberQueuedReceipts(batch);
                         if (fixed) continue;          // retry this batch
+                    }
+                    // A permanent rejection -- typically a row pointing at a
+                    // house that no longer exists. Retrying forever would jam
+                    // everything queued behind it, so park it and move on.
+                    if (/HTTP 4\d\d/.test(msg) && !/HTTP 429/.test(msg)) {
+                        batch.forEach(r => {
+                            r._error = msg.slice(0, 300);
+                            S.rejected.push(r);
+                        });
+                        const dead = {};
+                        batch.forEach(r => { dead[r.client_uid] = 1; });
+                        S.queue[name] = S.queue[name].filter(r => !dead[r.client_uid]);
+                        persist();
+                        toast(batch.length + ' entr' + (batch.length === 1 ? 'y' : 'ies') +
+                              ' could not be saved — see More', 'bad', 6000);
+                        continue;
                     }
                     throw err;
                 }
@@ -1093,7 +1155,12 @@ function renderMore() {
         S.houses.length + ' houses · ' + allServings().length + ' plate rows · ' +
         allContributions().length + ' receipts · ' + allExpenses().length + ' expenses<br>' +
         (queueSize() ? '<b style="color:var(--amber)">' + queueSize() + ' waiting to sync</b>'
-                     : 'Everything synced');
+                     : 'Everything synced') +
+        (S.rejected.length
+            ? '<br><b style="color:var(--red)">' + S.rejected.length +
+              ' entr' + (S.rejected.length === 1 ? 'y' : 'ies') +
+              ' rejected by the server — tell whoever set this up</b>'
+            : '');
     renderLog($('log-list'), activityFor(S.activeDate), 40);
     renderRoster();
 }
